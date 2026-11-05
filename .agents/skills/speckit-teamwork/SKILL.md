@@ -14,7 +14,7 @@ description: >-
 All engineering work is driven by five synchronized documents plus `ROADMAP.md`:
 1. `constitution.md` — Non-negotiable engineering principles (`/ponytail`, `/git-workflow`, `/deep-interview`, 300-point rubric focus).
 2. `spec.md` — Product specification covering the 4 user stages, 5 pain points, UI/UX transparency rules, and RecSys requirements.
-3. `plan.md` — Technical architecture (FastAPI + DuckDB/SQLite + OpenAI-compatible SDK + Next.js RTL + Leaflet).
+3. `plan.md` — Technical architecture (FastAPI + PostgreSQL + `pgvector` + Redis + TypeSafe `Jev` / OpenAI-compatible SDK + React 19 Vite RTL + Leaflet).
 4. `data-model.md` & `contracts.md` — Exact schemas over `dataset/*.csv` and JSON API contracts between FastAPI and Next.js generative UI widgets.
 5. `tasks.md` — Ordered, atomic execution tasks where each task maps 1:1 to a single-purpose `/git-workflow` branch (`feature/<task-slug>`).
 

@@ -44,9 +44,9 @@ We are building **Torob's Smart In-Person Shopping Assistant (دستیار هو�
 | **Frontend / UX** | React 19 + Vite + Tailwind CSS v4 (`dir="rtl"`, `Vazirmatn`) | Based directly on `UI_Template/` ("ترب‌چیت حضوری" dark raspberry-pink theme `#0c0c10` / `#e9325a`, 8-bit `TorobLogo`, `SearchingPapersAnimation`, Lucide icons). |
 | **Map Engine** | Open-source Leaflet / MapLibre + OSM/RTL tiles | Zero API-key friction on Liara; supports custom price pins & mall badges. |
 | **Backend / API** | FastAPI (Python) | Serves REST/SSE endpoints for RecSys, geo-search, comparison, and agent turns. |
-| **Data Engine** | DuckDB / SQLite (FTS + indexed tables from `dataset/*.csv`) | `dataset/` (273 MB) is git-ignored; ingested into fast local indexed DB. |
+| **Data Engine** | **PostgreSQL + `pgvector` (+ Redis)** | `dataset/` (273 MB) ingested into PostgreSQL (`JSONB` + `pg_trgm` + `pgvector` HNSW for semantic search & Stage-1 feature deduplication); Redis for `<2ms` session state, anti-fatigue counters & hot profile/query caching. |
 | **LLM SDK** | OpenAI-compatible SDK (`openai` / `litellm`) | Configured via `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`. |
-| **Agent & RecSys** | **OPEN FOR DESIGN DISCUSSION** | User has a custom RecSys design based on user input to finalize before locking `spec.md` & `plan.md`. |
+| **Agent & RecSys** | **Jev System One (`typesafe-sdk`) + 15-Parameter Adaptive Utility Engine** | `5 Base + 5 Persona + 5 Dynamic Spec` slots; Confidence-Gated Fusion + Embedding/Jev `Noul` deduplication (see [`JEV_MODEL_AND_RECSYS_REPORT.md`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/JEV_MODEL_AND_RECSYS_REPORT.md)). |
 | **Step 4 Inquiry** | Last-Price-Update Transparency + Contact Card + 1-Tap Fallback | Live outbound calling is skipped for now; UI displays `last_price_changed_at` badge, contact details, and instant fallback store switcher. |
 | **Deployment** | Liara (Dockerized service) | Single/coupled deployment optimized for 40-point Deployment score. |
 
@@ -57,8 +57,9 @@ We are building **Torob's Smart In-Person Shopping Assistant (دستیار هو�
 Always load the matching skill before working on its domain:
 
 1. **Workspace Project Skills (`.agents/skills/`)**:
-   - [`beyond-chat-rtl-ux`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/.agents/skills/beyond-chat-rtl-ux/SKILL.md): Mobile-first Persian RTL generative UI widgets, transparency badges, and GUI Base Template rules.
+   - [`beyond-chat-rtl-ux`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/.agents/skills/beyond-chat-rtl-ux/SKILL.md): Mobile-first Persian RTL generative UI widgets, transparency badges, and `UI_Template/` theme rules.
    - [`torob-dataset-guard`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/.agents/skills/torob-dataset-guard/SKILL.md): Rules for `shops.csv` (6,476), `products.csv` (225,903), and `offers.csv` (331,506), `"null"` handling, `payment_options`, and indoor mall extraction.
+   - [`typesafe-ai`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/.agents/skills/typesafe-ai/SKILL.md): Official TypeSafe AI System One (`Jev`) skill for `Choice`, `Score`, `Noul`, `Box`, speculative fan-out, and composite scoring.
    - [`speckit-teamwork`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/.agents/skills/speckit-teamwork/SKILL.md): SpecKit (`specs/001-torob-shopping-assistant/` + `ROADMAP.md`) and `/teamwork` subagent coordination protocol.
 2. **Global / Built-in Skills**:
    - `git-workflow` (`/home/tahaes/.gemini/config/skills/git-workflow/SKILL.md`)

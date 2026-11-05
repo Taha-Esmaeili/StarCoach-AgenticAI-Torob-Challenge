@@ -64,7 +64,7 @@ Keep and extend the 3-tab + 2-modal progressive disclosure architecture from `UI
 ## 3. Planned Upgrades Over `UI_Template` (To Verify with User)
 While keeping the exact visual spirit, theme, and icons of `UI_Template`:
 1. **Replace Mock Data (`mockData.ts`) with Real Dataset + RecSys**:
-   - Connect `PRODUCTS` and `SHOP_OFFERS` to the FastAPI + DuckDB backend (225,903 products, 331,506 offers, 6,476 shops) and the user's custom RecSys engine.
+   - Connect `PRODUCTS` and `SHOP_OFFERS` to the FastAPI + PostgreSQL (`pgvector`) + Redis backend (225,903 products, 331,506 offers, 6,476 shops) and the user's custom RecSys engine.
 2. **Interactive Tehran Map Integration in `StoresView`**:
    - Add an open-source Leaflet / MapLibre dark-themed map alongside the store cards showing user location, store pins with price tags, and instant radius/neighborhood filtering.
 3. **Indoor Mall Micro-Navigation Badges (`طبقه / راهرو / واحد`)**:

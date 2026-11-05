@@ -27,7 +27,7 @@ description: >-
 
 2. **Literal `"null"` String Normalization**:
    - Missing values in the CSVs are written as the literal string `"null"` (or `"[]"` for empty JSON arrays, and `""` in `offers.description`).
-   - During DuckDB/SQLite ingestion, normalize `'null'` -> `NULL` before JSON parsing or filtering.
+   - During PostgreSQL (`pgvector`) ingestion, normalize `'null'` -> `NULL` before `JSONB` parsing or filtering.
 
 3. **Real vs. Anonymized Shops & Fake Phones**:
    - All 6,476 phone numbers in `shops.contacts` are synthetic test numbers.
