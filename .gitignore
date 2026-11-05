@@ -1,0 +1,38 @@
+# Dataset (273 MB raw CSVs - excluded from Git)
+dataset/
+
+# Archive & Large Media Artifacts in UI_Template
+*.zip
+UI_Template/public/assets/aistudio/
+
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Python / FastAPI / DuckDB
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+*.duckdb
+*.duckdb.wal
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
