@@ -38,7 +38,7 @@ class ChatTurnRequest(BaseModel):
     message: str = Field(..., min_length=1)
     user_location: Coordinates = Field(default_factory=Coordinates)
     ui_overrides: UIOverrides = Field(default_factory=UIOverrides)
-    selected_product_id: int | None = None
+    selected_product_id: str | int | None = None
 
 
 class ActiveWeightSlot(BaseModel):
@@ -101,10 +101,10 @@ class MallMicroGuide(BaseModel):
 
 
 class ScoredStoreOffer(BaseModel):
-    offer_id: int
-    product_id: int
+    offer_id: str | int
+    product_id: str | int
     product_name: str
-    shop_id: int
+    shop_id: str | int
     shop_name: str
     price_toman: int
     utility_score: int = Field(..., ge=0, le=100)
@@ -136,10 +136,10 @@ class ScoredStoreOffer(BaseModel):
 
 
 class RecommendedProductItem(BaseModel):
-    product_id: int
+    product_id: str | int
     title: str
     english_title: str = ""
-    category_id: int
+    category_id: int = 0
     category_name: str
     brand_name: str | None = None
     image_url: str = ""
@@ -183,7 +183,7 @@ class FeedbackRequest(BaseModel):
 
 
 class ClosestOpenShopSummary(BaseModel):
-    shop_id: int
+    shop_id: str | int
     shop_name: str
     distance_km: float
     price_toman: int
@@ -191,7 +191,7 @@ class ClosestOpenShopSummary(BaseModel):
 
 
 class ComparedModelEntry(BaseModel):
-    product_id: int
+    product_id: str | int
     name: str
     brand_name: str | None = None
     image_url: str = ""
