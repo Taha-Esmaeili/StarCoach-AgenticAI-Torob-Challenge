@@ -23,11 +23,11 @@
 
 **⚠️ CRITICAL**: Must complete before User Story phases so all endpoints query real indexed Torob data in `< 50 ms` (`< 5 ms` on Redis hit).
 
-- [ ] T006 Implement Persian text normalizer (`ی`/`ک` unification, ZWNJ cleanup, Persian/Arabic digit conversion) and indoor mall regex parser (`پاساژ`/`مجتمع`/`طبقه`/`واحد`/`پلاک`) in `backend/db/normalizer.py`
-- [ ] T007 Implement PostgreSQL schema DDL (`CREATE EXTENSION vector`, `CREATE EXTENSION pg_trgm`, `shops`, `products`, `offers`, `user_profiles`, `user_dynamic_slots`, `shopping_sessions`) and fast `COPY` ingestion pipeline for `shops.csv`, `products.csv`, and `offers.csv` (handling literal `"null"` strings, parsing `JSONB` columns, and flagging the 112 real Torob shops) in `backend/db/postgres.py` and `backend/db/ingest.py`
-- [ ] T008 Implement sub-second PostgreSQL query layer (`pg_trgm` + `pgvector` cosine `<=>` hybrid search, Haversine distance in Tehran, real-time shift open/closed evaluation, strict `offers.csv` stock join vs. labeled `shops.category_names` fallback) in `backend/db/queries.py`
-- [ ] T009 [P] Implement Redis + PostgreSQL write-through persistence for `user_profiles` (unconstrained $[0,1]^{15}$ weights), `user_dynamic_slots` (`pgvector` `vector(1536)`), `shopping_sessions` (`torob:session:{id}`), and query cache (`torob:qcache:{hash}`) in `backend/db/redis_cache.py` and `backend/db/profiles.py`
-- [ ] T010 Write assert-based dataset integrity, `pgvector` index check, Redis round-trip, and `< 50 ms` query benchmark self-check in `backend/tests/test_ingest_guard.py`
+- [X] T006 Implement Persian text normalizer (`ی`/`ک` unification, ZWNJ cleanup, Persian/Arabic digit conversion) and indoor mall regex parser (`پاساژ`/`مجتمع`/`طبقه`/`واحد`/`پلاک`) in `backend/db/normalizer.py`
+- [X] T007 Implement PostgreSQL schema DDL (`CREATE EXTENSION vector`, `CREATE EXTENSION pg_trgm`, `shops`, `products`, `offers`, `user_profiles`, `user_dynamic_slots`, `shopping_sessions`) and fast `COPY` ingestion pipeline for `shops.csv`, `products.csv`, and `offers.csv` (handling literal `"null"` strings, parsing `JSONB` columns, and flagging the 112 real Torob shops) in `backend/db/postgres.py` and `backend/db/ingest.py`
+- [X] T008 Implement sub-second PostgreSQL query layer (`pg_trgm` + `pgvector` cosine `<=>` hybrid search, Haversine distance in Tehran, real-time shift open/closed evaluation, strict `offers.csv` stock join vs. labeled `shops.category_names` fallback) in `backend/db/queries.py`
+- [X] T009 [P] Implement Redis + PostgreSQL write-through persistence for `user_profiles` (unconstrained $[0,1]^{15}$ weights), `user_dynamic_slots` (`pgvector` `vector(1536)`), `shopping_sessions` (`torob:session:{id}`), and query cache (`torob:qcache:{hash}`) in `backend/db/redis_cache.py` and `backend/db/profiles.py`
+- [X] T010 Write assert-based dataset integrity, `pgvector` index check, Redis round-trip, and `< 50 ms` query benchmark self-check in `backend/tests/test_ingest_guard.py`
 
 **Checkpoint**: `uv run pytest backend/tests/test_ingest_guard.py` passes with exact row counts (`6,476` / `225,903` / `331,506`) and sub-50ms retrieval.
 
@@ -37,12 +37,12 @@
 
 **Purpose**: Build the mathematical core specified in [`JEV_MODEL_AND_RECSYS_REPORT.md`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/JEV_MODEL_AND_RECSYS_REPORT.md).
 
-- [ ] T011 Implement Dual-Mode System One engine (`typesafe-sdk` `Jev` client using `Choice`, `Score`, `Noul`, `Box` with automatic OpenAI-compatible structured logprob/JSON fallback) in `backend/recsys/jev_engine.py`
-- [ ] T012 [P] Implement 15-Slot Weight Manager (`5 Base + 5 Persona + 5 Dynamic` slots), Two-Layer Normalization (unconstrained $[0,1]^{15}$ PostgreSQL/Redis storage + query-time L1 simplex normalization $\sum_{k=1}^{15} \hat{w}_k = 1$), and Confidence-Gated Fusion ($\alpha_k(q) = \operatorname{clip}(\gamma \cdot c_k(q), 0.15, 0.95)$) in `backend/recsys/weights.py`
-- [ ] T013 [P] Implement Hybrid Feature Deduplicator (Stage-1 `pgvector` cosine similarity `1 - (embedding <=> $1) > 0.80` + Stage-2 `Jev` `Noul` equivalence check in $[0.65, 0.80]$ + decayed utility LRU eviction for Slots 11–15) in `backend/recsys/deduplicator.py`
-- [ ] T014 Implement Utility Scorer with Hard-Constraint Dealbreaker Hurdle ($\Phi(i) \in \{1.0, 0.15\}$), Net Value-of-Travel coupling, Explainable `why_this_shop_fa` attribution, and Pareto-Front Top-3 selector (`best_overall`, `closest_open`, `lowest_price`) in `backend/recsys/scorer.py`
-- [ ] T015 [P] Implement Anti-Fatigue Clarification Policy backed by Redis session state (`clarification_count` gate: max 1 initial prompt when $\text{mean}(\text{EffConf}_k) < 0.45$, and at most 1 re-trigger upon 👎 or `user_dissatisfied.noul >= 0.70`) in `backend/recsys/clarifier.py`
-- [ ] T016 Write unit tests verifying L1 simplex normalization, zero DB weight dilution, hurdle penalties, and anti-fatigue state transitions in `backend/tests/test_recsys_math.py`
+- [X] T011 Implement Dual-Mode System One engine (`typesafe-sdk` `Jev` client using `Choice`, `Score`, `Noul`, `Box` with automatic OpenAI-compatible structured logprob/JSON fallback) in `backend/recsys/jev_engine.py`
+- [X] T012 [P] Implement 15-Slot Weight Manager (`5 Base + 5 Persona + 5 Dynamic` slots), Two-Layer Normalization (unconstrained $[0,1]^{15}$ PostgreSQL/Redis storage + query-time L1 simplex normalization $\sum_{k=1}^{15} \hat{w}_k = 1$), and Confidence-Gated Fusion ($\alpha_k(q) = \operatorname{clip}(\gamma \cdot c_k(q), 0.15, 0.95)$) in `backend/recsys/weights.py`
+- [X] T013 [P] Implement Hybrid Feature Deduplicator (Stage-1 `pgvector` cosine similarity `1 - (embedding <=> $1) > 0.80` + Stage-2 `Jev` `Noul` equivalence check in $[0.65, 0.80]$ + decayed utility LRU eviction for Slots 11–15) in `backend/recsys/deduplicator.py`
+- [X] T014 Implement Utility Scorer with Hard-Constraint Dealbreaker Hurdle ($\Phi(i) \in \{1.0, 0.15\}$), Net Value-of-Travel coupling, Explainable `why_this_shop_fa` attribution, and Pareto-Front Top-3 selector (`best_overall`, `closest_open`, `lowest_price`) in `backend/recsys/scorer.py`
+- [X] T015 [P] Implement Anti-Fatigue Clarification Policy backed by Redis session state (`clarification_count` gate: max 1 initial prompt when $\text{mean}(\text{EffConf}_k) < 0.45$, and at most 1 re-trigger upon 👎 or `user_dissatisfied.noul >= 0.70`) in `backend/recsys/clarifier.py`
+- [X] T016 Write unit tests verifying L1 simplex normalization, zero DB weight dilution, hurdle penalties, and anti-fatigue state transitions in `backend/tests/test_recsys_math.py`
 
 **Checkpoint**: `uv run pytest backend/tests/test_recsys_math.py` passes all mathematical invariants.
 

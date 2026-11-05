@@ -49,10 +49,10 @@ flowchart LR
 
 ### Milestone 1: Foundation — FastAPI Contracts & PostgreSQL + `pgvector` (+ Redis) Indexing (Phases 1–2)
 - [x] **Phase 1 (`T001`–`T005`)**: `docker-compose.yml` (`pgvector:pg16` + `redis:7-alpine`), FastAPI skeleton, `.env` loader, Pydantic schemas (`backend/models/schemas.py`), and typed frontend API client (`UI_Template/src/api/client.ts`).
-- [ ] **Phase 2 (`T006`–`T010`)**: PostgreSQL (`pgvector` + `pg_trgm` + `JSONB`) ingestion of `shops.csv` (`6,476`), `products.csv` (`225,903`), and `offers.csv` (`331,506`), indoor mall regex extractor (`پاساژ`/`طبقه`/`واحد`), Redis session/query caching, and sub-50ms geo+stock query engine.
+- [x] **Phase 2 (`T006`–`T010`)**: PostgreSQL (`pgvector` + `pg_trgm` + `JSONB`) ingestion of `shops.csv` (`6,476`), `products.csv` (`225,903`), and `offers.csv` (`331,506`), indoor mall regex extractor (`پاساژ`/`طبقه`/`واحد`), Redis session/query caching, and sub-50ms geo+stock query engine.
 
 ### Milestone 2: Intelligence — Jev System One & 15-Parameter Adaptive RecSys (Phase 3)
-- [ ] **Phase 3 (`T011`–`T016`)**: Dual-Mode `Jev` (`typesafe-sdk` + OpenAI System-One fallback), `5+5+5` slot manager, Two-Layer L1 normalization, Confidence-Gated Fusion, Hybrid `pgvector` (`<=>`) + `Jev` `Noul` deduplication, Hurdle $\Phi(i)$, Value-of-Travel coupling, Pareto Top-3 selector, and Anti-Fatigue Clarifier.
+- [x] **Phase 3 (`T011`–`T016`)**: Dual-Mode `Jev` (`typesafe-sdk` + OpenAI System-One fallback), `5+5+5` slot manager, Two-Layer L1 normalization, Confidence-Gated Fusion, Hybrid `pgvector` (`<=>`) + `Jev` `Noul` deduplication, Hurdle $\Phi(i)$, Value-of-Travel coupling, Pareto Top-3 selector, and Anti-Fatigue Clarifier.
 
 ### Milestone 3: Beyond-Chat RTL UX Integration (Phases 4–6)
 - [ ] **Phase 4 (`T017`–`T020`)**: Live conversational turns (`/api/v1/chat/turn`), `FeatureClarificationCard.tsx`, live 15-parameter sliders (`ProfilePrioritiesModal.tsx`), and 👍/👎 feedback loop.
