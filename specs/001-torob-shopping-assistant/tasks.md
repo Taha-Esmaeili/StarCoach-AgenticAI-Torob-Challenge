@@ -9,11 +9,11 @@
 
 **Purpose**: Initialize the Python FastAPI backend workspace, local `docker-compose.yml` for **PostgreSQL (`pgvector:pg16`) + Redis (`redis:7-alpine`)**, and shared typed contracts alongside `UI_Template/`.
 
-- [ ] T001 Create `docker-compose.yml` (`pgvector/pgvector:pg16` + `redis:7-alpine`), Python project dependencies (`fastapi`, `uvicorn`, `asyncpg`, `psycopg[binary]`, `pgvector`, `redis`, `pydantic`, `openai`, `typesafe-sdk`, `numpy`, `pytest`, `pytest-asyncio`) in `pyproject.toml`, and `.env.example`
-- [ ] T002 [P] Implement environment and settings loader (`DATABASE_URL`, `REDIS_URL`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBEDDING_MODEL`, `TYPESAFE_API_KEY`, `TOROB_DATASET_DIR`) in `backend/config.py`
-- [ ] T003 [P] Implement Pydantic request/response schemas matching `contracts/api.md` in `backend/models/schemas.py`
-- [ ] T004 Create FastAPI application entrypoint with `asyncpg` + `redis` lifespan pools, CORS, RTL UTF-8 JSON defaults, and `/api/v1/health` probe in `backend/main.py`
-- [ ] T005 [P] Create typed frontend API client and Vite `/api` proxy configuration in `UI_Template/src/api/client.ts` and `UI_Template/vite.config.ts`
+- [X] T001 Create `docker-compose.yml` (`pgvector/pgvector:pg16` + `redis:7-alpine`), Python project dependencies (`fastapi`, `uvicorn`, `asyncpg`, `psycopg[binary]`, `pgvector`, `redis`, `pydantic`, `openai`, `typesafe-sdk`, `numpy`, `pytest`, `pytest-asyncio`) in `pyproject.toml`, and `.env.example`
+- [X] T002 [P] Implement environment and settings loader (`DATABASE_URL`, `REDIS_URL`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBEDDING_MODEL`, `TYPESAFE_API_KEY`, `TOROB_DATASET_DIR`) in `backend/config.py`
+- [X] T003 [P] Implement Pydantic request/response schemas matching `contracts/api.md` in `backend/models/schemas.py`
+- [X] T004 Create FastAPI application entrypoint with `asyncpg` + `redis` lifespan pools, CORS, RTL UTF-8 JSON defaults, and `/api/v1/health` probe in `backend/main.py`
+- [X] T005 [P] Create typed frontend API client and Vite `/api` proxy configuration in `UI_Template/src/api/client.ts` and `UI_Template/vite.config.ts`
 
 ---
 

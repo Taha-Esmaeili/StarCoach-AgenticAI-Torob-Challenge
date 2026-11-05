@@ -26,7 +26,7 @@ We are building **Torob's Smart In-Person Shopping Assistant (ترب‌چیت ح
 **Target Platform**: Local development first; Dockerized Linux container on **Liara** strictly in the final phase  
 **Project Type**: Full-stack Web Application (Mobile-first Persian RTL Generative UI + FastAPI + PostgreSQL/`pgvector` + Redis + Jev Backend)  
 **Performance Goals**: `< 50 ms` PostgreSQL (`pgvector` + `pg_trgm`) / `< 5 ms` Redis cached retrieval; `< 450 ms` parallel `Jev` System One scoring; `< 1.5 s` end-to-end turn latency  
-**Constraints**: Strict adherence to `/git-workflow` (atomic single-purpose branches targeting `develop`, 3-gate user approval), `/ponytail` (smallest complete solution, zero bloat), and `/deep-interview` (consultant verification).
+**Constraints**: Strict adherence to `/git-workflow` (atomic single-purpose branches targeting `develop`, 3-gate user approval), `/ponytail` (smallest complete solution, zero bloat), `/deep-interview` (consultant verification), and **100% `.env`-driven configuration (`FR-013`)** where zero API keys, model endpoints, DB/Redis TTLs, RecSys thresholds, or geo bounds are hardcoded.
 
 ---
 

@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: torob_postgres_pgvector
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-torob}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-torob_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-torob_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - torob_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torob} -d ${POSTGRES_DB:-torob_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: torob_redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - torob_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  torob_pgdata:
+  torob_redisdata:

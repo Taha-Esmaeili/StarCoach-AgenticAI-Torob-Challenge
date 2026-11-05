@@ -45,7 +45,8 @@ We are building **Torob's Smart In-Person Shopping Assistant (دستیار هو�
 | **Map Engine** | Open-source Leaflet / MapLibre + OSM/RTL tiles | Zero API-key friction on Liara; supports custom price pins & mall badges. |
 | **Backend / API** | FastAPI (Python) | Serves REST/SSE endpoints for RecSys, geo-search, comparison, and agent turns. |
 | **Data Engine** | **PostgreSQL + `pgvector` (+ Redis)** | `dataset/` (273 MB) ingested into PostgreSQL (`JSONB` + `pg_trgm` + `pgvector` HNSW for semantic search & Stage-1 feature deduplication); Redis for `<2ms` session state, anti-fatigue counters & hot profile/query caching. |
-| **LLM SDK** | OpenAI-compatible SDK (`openai` / `litellm`) | Configured via `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`. |
+| **LLM SDK** | OpenAI-compatible SDK (`openai` / `litellm`) | Configured via `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBEDDING_*`. |
+| **Config & Secrets** | **100% `.env`-Driven (`backend/config.py`)** | **Zero hardcoded API keys or important entity variables/thresholds** (all DB/Redis pools & TTLs, RecSys 15-slot defaults, fusion/dedup/clarify/hurdle thresholds, and geo bounds live in `.env`). |
 | **Agent & RecSys** | **Jev System One (`typesafe-sdk`) + 15-Parameter Adaptive Utility Engine** | `5 Base + 5 Persona + 5 Dynamic Spec` slots; Confidence-Gated Fusion + Embedding/Jev `Noul` deduplication (see [`JEV_MODEL_AND_RECSYS_REPORT.md`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/JEV_MODEL_AND_RECSYS_REPORT.md)). |
 | **Step 4 Inquiry** | Last-Price-Update Transparency + Contact Card + 1-Tap Fallback | Live outbound calling is skipped for now; UI displays `last_price_changed_at` badge, contact details, and instant fallback store switcher. |
 | **Deployment** | Liara (Dockerized service) | Single/coupled deployment optimized for 40-point Deployment score. |

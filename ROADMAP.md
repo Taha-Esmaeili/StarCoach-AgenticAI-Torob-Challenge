@@ -48,7 +48,7 @@ flowchart LR
 - [x] Complete SpecKit suite in [`specs/001-torob-shopping-assistant/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/specs/001-torob-shopping-assistant/) (`constitution.md`, `spec.md`, `research.md`, `data-model.md`, `contracts/api.md`, `quickstart.md`, `plan.md`, `tasks.md`)
 
 ### Milestone 1: Foundation — FastAPI Contracts & PostgreSQL + `pgvector` (+ Redis) Indexing (Phases 1–2)
-- [ ] **Phase 1 (`T001`–`T005`)**: `docker-compose.yml` (`pgvector:pg16` + `redis:7-alpine`), FastAPI skeleton, `.env` loader, Pydantic schemas (`backend/models/schemas.py`), and typed frontend API client (`UI_Template/src/api/client.ts`).
+- [x] **Phase 1 (`T001`–`T005`)**: `docker-compose.yml` (`pgvector:pg16` + `redis:7-alpine`), FastAPI skeleton, `.env` loader, Pydantic schemas (`backend/models/schemas.py`), and typed frontend API client (`UI_Template/src/api/client.ts`).
 - [ ] **Phase 2 (`T006`–`T010`)**: PostgreSQL (`pgvector` + `pg_trgm` + `JSONB`) ingestion of `shops.csv` (`6,476`), `products.csv` (`225,903`), and `offers.csv` (`331,506`), indoor mall regex extractor (`پاساژ`/`طبقه`/`واحد`), Redis session/query caching, and sub-50ms geo+stock query engine.
 
 ### Milestone 2: Intelligence — Jev System One & 15-Parameter Adaptive RecSys (Phase 3)

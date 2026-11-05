@@ -102,6 +102,7 @@ In the **final phase** (after all local features, dataset indexing, RecSys, and 
 - **FR-010**: System MUST apply the Dealbreaker Hurdle Multiplier $\Phi(i) \in \{1.0, 0.15\}$, Net Value-of-Travel Coupling, and Pareto-Front Top-3 diversity when ranking store offers.
 - **FR-011**: System MUST enforce the Anti-Fatigue Clarification Policy: trigger `FeatureClarificationCard.tsx` at most once on Turn 1 when $\text{mean}(\text{EffConf}_k) < 0.45$, and only re-trigger a second time if the user clicks `ThumbsDown` or `user_dissatisfied.noul >= 0.70`.
 - **FR-012**: Frontend MUST preserve the theme (`#0c0c10` / `#e9325a`), custom SVG animations (`TorobLogo`, `SearchingPapersAnimation`), and component layout of [`UI_Template/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/UI_Template), while adding an open-source Leaflet/MapLibre dark-mode RTL map in `StoresView`, dynamic spec comparison in `ComparisonView`, indoor mall floor/unit badges, and dynamic backup store lookup.
+- **FR-013 (100% `.env`-Driven Configuration — Zero Hardcoded Entities)**: All API keys (`TYPESAFE_API_KEY`, `LLM_API_KEY`, `EMBEDDING_API_KEY`), model endpoints/names, PostgreSQL/Redis DSNs, connection pools & Redis TTLs, RecSys 15-slot counts/default weights/fusion/dedup/clarify/hurdle thresholds (`RECSYS_*`), and Tehran geolocation defaults/bounds (`TEHRAN_*`, `DEFAULT_USER_*`, `VITE_*`) MUST be loaded dynamically from `.env` via `backend/config.py` and `import.meta.env`—never hardcoded in business logic.
 
 ### Key Entities
 
