@@ -1,228 +1,186 @@
-import React, { useState } from 'react';
-import { Product } from '../types';
+import React, { useMemo } from 'react';
+import { Product, ShopOffer } from '../types';
 import { PRODUCTS } from '../data/mockData';
-import { ArrowLeft, ChevronDown, Check, Zap, Gauge, BatteryCharging, Swords } from 'lucide-react';
+import { Check, X, Store, Sparkles, Swords } from 'lucide-react';
 
 interface ComparisonViewProps {
-  selectedProduct: Product;
-  onSelectProduct: (p: Product) => void;
-  onNavigateToStores: () => void;
+  products?: Product[];
+  onSelectProductForStores: (product: Product) => void;
+  offers: ShopOffer[];
 }
 
 export const ComparisonView: React.FC<ComparisonViewProps> = ({
-  selectedProduct,
-  onSelectProduct,
-  onNavigateToStores,
+  products,
+  onSelectProductForStores,
+  offers,
 }) => {
-  const [showFullSpecs, setShowFullSpecs] = useState(false);
-  const scooters = PRODUCTS.filter((p) => p.category === 'اسکوتر برقی');
+  // Use live recommendedProducts from backend when available, otherwise fall back to template products
+  const comparedProducts = useMemo(() => {
+    if (products && products.length > 0) {
+      return products.slice(0, 3);
+    }
+    return PRODUCTS.filter((p) => p.category === 'اسکوتر برقی').slice(0, 3);
+  }, [products]);
 
-  const detailedSpecs = [
-    { label: 'وزن دستگاه', key: 'وزن دستگاه' },
-    { label: 'سیستم ترمز و تعلیق', key: 'سیستم ترمز' },
-    { label: 'مناسب برای', key: 'bestFor' },
-    { label: 'قابلیت تاشو', key: 'قابلیت تاشو' },
-  ];
+  const activeCategoryName = comparedProducts[0]?.category || 'محصولات منتخب';
+
+  // Dynamically extract up to 6 shared/informative spec keys from the active products (`T025`)
+  const dynamicSpecKeys = useMemo(() => {
+    const keyCounts = new Map<string, number>();
+    comparedProducts.forEach((p) => {
+      Object.keys(p.specs || {}).forEach((k) => {
+        keyCounts.set(k, (keyCounts.get(k) || 0) + 1);
+      });
+    });
+    return Array.from(keyCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k]) => k);
+  }, [comparedProducts]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#0c0c10] space-y-5 font-sans select-none">
-      <div className="max-w-4xl mx-auto space-y-4">
-        {/* Simple & Clean Header with Combat / Battle Icon */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1f1f2a] pb-3">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#0c0c10] font-sans">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="p-4 rounded-2xl bg-[#13131a] border border-[#1f1f2a] flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h2 className="text-base md:text-lg font-black text-white flex items-center gap-2">
-              <Swords className="w-5 h-5 text-[#ff4d79]" />
-              <span>نبرد و مقایسه مدل‌های بازار</span>
-            </h2>
-            <p className="text-xs text-neutral-400 mt-0.5">
-              مقایسه قیمت و مشخصات کلیدی برای انتخاب بهترین گزینه در خرید حضوری
+            <div className="flex items-center gap-2">
+              <Swords className="w-5 h-5 text-[#e9325a]" />
+              <h2 className="text-base md:text-lg font-extrabold text-white">
+                نبرد و مقایسه تخصصی مدل‌های «{activeCategoryName}» برای خرید حضوری در تهران
+              </h2>
+            </div>
+            <p className="text-xs text-neutral-400 mt-1">
+              مقایسه مشخصات فنی واقعی کاتالوگ ترب، تعداد مغازه‌های دارای موجودی حضوری و کف قیمت بازار تهران
             </p>
           </div>
-          <span className="text-xs text-neutral-400 self-start sm:self-auto font-medium">
-            {scooters.length} مدل محبوب
+          <span className="text-[11px] font-bold text-[#ff7597] bg-[#e9325a]/15 border border-[#e9325a]/30 px-3 py-1 rounded-xl">
+            {comparedProducts.length.toLocaleString('fa-IR')} مدل برگزیده
           </span>
         </div>
 
-        {/* Simplified Side-by-Side Product Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {scooters.map((scooter) => {
-            const isCurrent = scooter.id === selectedProduct.id;
+        {/* Comparison Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {comparedProducts.map((product, index) => {
+            const productOffers = offers.filter((o) => o.productId === product.id);
+            const openCount = productOffers.filter((o) => o.isOpenNow).length;
 
             return (
               <div
-                key={scooter.id}
-                onClick={() => onSelectProduct(scooter)}
-                className={`p-4 rounded-2xl transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                  isCurrent
-                    ? 'bg-[#181822] border-2 border-[#e9325a] shadow-lg shadow-[#e9325a]/15'
-                    : 'bg-[#14141a] border border-[#22222d] hover:border-[#353545]'
+                key={product.id}
+                className={`p-4 rounded-2xl flex flex-col justify-between border transition-all ${
+                  index === 0
+                    ? 'torob-gradient-border bg-[#14141d]'
+                    : 'bg-[#121219] border-[#20202c]'
                 }`}
               >
-                <div className="space-y-3">
-                  {/* Compact Header: Image + Title */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-14 h-14 rounded-xl overflow-hidden bg-black border border-[#282836] shrink-0">
-                      <img
-                        src={scooter.image}
-                        alt={scooter.title}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      {isCurrent ? (
-                        <span className="text-[10px] text-[#ff80a0] font-bold px-2 py-0.5 rounded-full bg-[#e9325a]/15 border border-[#e9325a]/30 inline-block mb-1">
-                          مدل انتخابی
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-neutral-400 font-medium px-2 py-0.5 rounded-full bg-[#1c1c25] border border-[#282834] inline-block mb-1">
-                          {scooter.brand.split(' ')[0]}
-                        </span>
-                      )}
-                      <h3 className="font-extrabold text-xs md:text-sm text-white line-clamp-2 leading-tight">
-                        {scooter.title}
-                      </h3>
-                    </div>
-                  </div>
-
-                  {/* Price Banner */}
-                  <div className="p-2.5 rounded-xl bg-[#191924] border border-[#252536] flex items-center justify-between">
-                    <span className="text-[11px] text-neutral-400">کف قیمت تهران:</span>
-                    <span className="text-sm font-black text-white">
-                      {scooter.minPrice.toLocaleString('fa-IR')}
-                      <span className="text-[10px] font-normal text-neutral-400 mr-1">تومان</span>
+                <div className="space-y-4">
+                  {/* Top Badge */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-lg bg-[#e9325a]/15 text-[#ff4d79] border border-[#e9325a]/30 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      {product.badge || (index === 0 ? 'بهترین ارزش خرید' : 'گزینه جایگزین')}
+                    </span>
+                    <span className="text-[11px] text-neutral-400">
+                      امتیاز تطابق: <strong className="text-white">{product.rating}</strong>
                     </span>
                   </div>
 
-                  {/* Primary 3 Key Decision Specs */}
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex items-center justify-between py-1 border-b border-[#1f1f2a]">
-                      <span className="text-neutral-400 flex items-center gap-1.5 text-[11px]">
-                        <Gauge className="w-3.5 h-3.5 text-amber-400" />
-                        حداکثر سرعت:
-                      </span>
-                      <span className="font-bold text-white text-[11px]">
-                        {scooter.specs['حداکثر سرعت'] || '—'}
-                      </span>
+                  {/* Product Image & Title */}
+                  {product.image && (
+                    <div className="w-full h-36 rounded-xl overflow-hidden bg-[#0d0d14] border border-white/5">
+                      <img
+                        src={product.image}
+                        alt={product.title}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     </div>
+                  )}
 
-                    <div className="flex items-center justify-between py-1 border-b border-[#1f1f2a]">
-                      <span className="text-neutral-400 flex items-center gap-1.5 text-[11px]">
-                        <BatteryCharging className="w-3.5 h-3.5 text-emerald-400" />
-                        برد مسافتی:
-                      </span>
-                      <span className="font-bold text-white text-[11px]">
-                        {scooter.specs['برد مسافتی'] || '—'}
-                      </span>
+                  <div>
+                    <h3 className="text-sm font-black text-white leading-relaxed">
+                      {product.title}
+                    </h3>
+                    <p className="text-[11px] text-neutral-400 mt-1">{product.bestFor}</p>
+                  </div>
+
+                  {/* Price Box */}
+                  <div className="p-3 rounded-xl bg-[#0d0d13] border border-[#1d1d26]">
+                    <div className="text-[10px] text-neutral-400">بازه قیمت حضوری در تهران:</div>
+                    <div className="text-sm font-extrabold text-[#ff4d79] mt-0.5">
+                      از {product.minPrice.toLocaleString('fa-IR')} تومان
                     </div>
-
-                    <div className="flex items-center justify-between py-1">
-                      <span className="text-neutral-400 flex items-center gap-1.5 text-[11px]">
-                        <Zap className="w-3.5 h-3.5 text-[#ff4d79]" />
-                        توان موتور:
-                      </span>
-                      <span className="font-bold text-white text-[11px]">
-                        {scooter.specs['توان موتور'] || '—'}
+                    <div className="text-[10px] text-neutral-400 mt-1 flex items-center gap-1">
+                      <Store className="w-3 h-3 text-emerald-400" />
+                      <span>
+                        موجود در {product.storeCount.toLocaleString('fa-IR')} فروشگاه حضوری (
+                        {(openCount || product.storeCount).toLocaleString('fa-IR')} مغازه فعال)
                       </span>
                     </div>
                   </div>
+
+                  {/* Dynamic Category Specs Table (`T025`) */}
+                  {dynamicSpecKeys.length > 0 && (
+                    <div className="space-y-1.5 text-xs">
+                      <div className="text-[11px] font-bold text-neutral-400 mb-1">
+                        مشخصات کلیدی کاتالوگ:
+                      </div>
+                      {dynamicSpecKeys.map((specKey) => (
+                        <div
+                          key={specKey}
+                          className="flex justify-between gap-2 py-1.5 border-b border-[#1c1c26]"
+                        >
+                          <span className="text-neutral-400">{specKey}:</span>
+                          <span className="font-semibold text-neutral-200 text-left">
+                            {product.specs[specKey] || '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Pros & Cons */}
+                  <div className="space-y-2 pt-1">
+                    <div className="text-[11px] font-bold text-emerald-400">نقاط قوت:</div>
+                    <ul className="space-y-1">
+                      {product.pros.map((pro, idx) => (
+                        <li
+                          key={idx}
+                          className="text-[11px] text-neutral-300 flex items-start gap-1.5"
+                        >
+                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{pro}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <div className="text-[11px] font-bold text-rose-400 pt-1">ملاحظات خرید:</div>
+                    <ul className="space-y-1">
+                      {product.cons.map((con, idx) => (
+                        <li
+                          key={idx}
+                          className="text-[11px] text-neutral-400 flex items-start gap-1.5"
+                        >
+                          <X className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                          <span>{con}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
 
-                {/* Card Action Button */}
-                <div className="mt-4 pt-3 border-t border-[#1f1f2a]">
-                  {isCurrent ? (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onNavigateToStores();
-                      }}
-                      className="w-full py-2 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-[#e9325a]/25 transition-all"
-                    >
-                      <span>مشاهده فروشگاه‌ها</span>
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectProduct(scooter);
-                      }}
-                      className="w-full py-2 rounded-xl bg-[#1b1b24] hover:bg-[#232330] border border-[#282836] text-xs text-neutral-300 font-bold transition-all"
-                    >
-                      انتخاب این مدل
-                    </button>
-                  )}
-                </div>
+                {/* Action Button */}
+                <button
+                  onClick={() => onSelectProductForStores(product)}
+                  className="mt-5 w-full py-2.5 px-4 rounded-xl bg-[#e9325a] hover:bg-[#d6254d] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Store className="w-3.5 h-3.5" />
+                  <span>مشاهده مغازه‌های حضوری این مدل</span>
+                </button>
               </div>
             );
           })}
-        </div>
-
-        {/* Expandable Full Comparison Matrix */}
-        <div className="pt-2">
-          <button
-            onClick={() => setShowFullSpecs(!showFullSpecs)}
-            className="w-full p-3 rounded-2xl bg-[#14141a] hover:bg-[#181822] border border-[#22222d] text-xs font-bold text-neutral-300 flex items-center justify-center gap-2 transition-all cursor-pointer group"
-          >
-            <Swords className="w-4 h-4 text-[#ff4d79] group-hover:scale-110 transition-transform" />
-            <span>{showFullSpecs ? 'بستن جدول مشخصات و نبرد کامل' : 'مشاهده جدول نبرد و مقایسه جزئیات فنی'}</span>
-            <ChevronDown
-              className={`w-4 h-4 text-[#ff4d79] transition-transform duration-200 ${
-                showFullSpecs ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
-
-          {showFullSpecs && (
-            <div className="mt-3 rounded-2xl bg-[#14141a] border border-[#22222d] overflow-hidden shadow-xl animate-fade-in">
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
-                  <thead>
-                    <tr className="border-b border-[#20202a] bg-[#171720] text-neutral-300">
-                      <th className="p-3 w-1/3 font-bold">مشخصه فنی</th>
-                      {scooters.map((s) => (
-                        <th
-                          key={s.id}
-                          className={`p-3 font-bold ${
-                            s.id === selectedProduct.id ? 'text-[#ff6688]' : 'text-white'
-                          }`}
-                        >
-                          {s.title.split('مدل')[0]}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#1e1e28] text-neutral-300">
-                    {detailedSpecs.map((spec, idx) => (
-                      <tr key={idx} className="hover:bg-white/[0.02]">
-                        <td className="p-3 font-medium text-neutral-400">{spec.label}</td>
-                        {scooters.map((s) => {
-                          let val = '';
-                          if (spec.key === 'bestFor') {
-                            val = s.bestFor;
-                          } else {
-                            val = s.specs[spec.key] || s.specs['سیستم تعلیق'] || 'استاندارد';
-                          }
-
-                          return (
-                            <td
-                              key={s.id}
-                              className={`p-3 text-[11px] leading-relaxed ${
-                                s.id === selectedProduct.id
-                                  ? 'text-white font-semibold bg-[#e9325a]/5'
-                                  : 'text-neutral-300'
-                              }`}
-                            >
-                              {val}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

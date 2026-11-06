@@ -55,9 +55,9 @@ flowchart LR
 - [x] **Phase 3 (`T011`–`T016`)**: Dual-Mode `Jev` (`typesafe-sdk` + OpenAI System-One fallback), `5+5+5` slot manager, Two-Layer L1 normalization, Confidence-Gated Fusion, Hybrid `pgvector` (`<=>`) + `Jev` `Noul` deduplication, Hurdle $\Phi(i)$, Value-of-Travel coupling, Pareto Top-3 selector, and Anti-Fatigue Clarifier.
 
 ### Milestone 3: Beyond-Chat RTL UX Integration (Phases 4–6)
-- [ ] **Phase 4 (`T017`–`T020`)**: Live conversational turns (`/api/v1/chat/turn`), `FeatureClarificationCard.tsx`, live 15-parameter sliders (`ProfilePrioritiesModal.tsx`), and 👍/👎 feedback loop.
-- [ ] **Phase 5 (`T021`–`T023`)**: Enhanced `StoreCard.tsx` (`Why-This-Shop` pills, freshness & verified badges) + real dark-mode `Leaflet` map (`InteractiveMap.tsx`) with Toman price pins and Tehran neighborhood presets.
-- [ ] **Phase 6 (`T024`–`T027`)**: Dynamic category spec `ComparisonMatrix.tsx` (`/api/v1/products/compare`) + `ShoppingCompanionModal.tsx` with indoor mall micro-guide and 1-tap closed-store rescue (`/api/v1/stores/{offer_id}/fallback`).
+- [x] **Phase 4 (`T017`–`T020`)**: Live conversational turns (`/api/v1/chat/turn`), `FeatureClarificationCard.tsx`, live 15-parameter sliders (`Sidebar.tsx`), and 👍/👎 feedback loop.
+- [x] **Phase 5 (`T021`–`T023`)**: Enhanced `StoresView.tsx` (`Why-This-Shop` pills, freshness & verified badges, indoor floor/unit badges) + real dark-mode `Leaflet` map (`InteractiveMap.tsx`) with Toman price pins and Tehran neighborhood presets.
+- [x] **Phase 6 (`T024`–`T027`)**: Dynamic category spec `ComparisonView.tsx` (`/api/v1/products/compare`) + `ShoppingCompanionModal.tsx` with indoor mall micro-guide and 1-tap closed-store rescue (`/api/v1/stores/{offer_id}/fallback`).
 
 ### Milestone 4: Final Phase — Liara Production Deployment & Demo Video (Phase 7)
-- [ ] **Phase 7 (`T028`–`T030`)**: Multi-stage `Dockerfile`, `liara.json`, Liara cloud deployment verification, and 5-minute Hackathon Demo Video (`DEMO_SCRIPT.md`).
+- [x] **Phase 7 (`T028`–`T030`)**: Multi-stage `Dockerfile`, `liara.json`, Liara cloud deployment configuration, and 5-minute Hackathon Demo Video script (`DEMO_SCRIPT.md`).

@@ -58,6 +58,10 @@ export interface ShopOffer {
   historyInTorobYears: number;
   stockStatus: 'confirmed_in_stock' | 'unconfirmed_in_catalog' | 'out_of_stock';
   mallFloorGuide?: string;
+  utilityScore?: number;
+  paretoRole?: 'best_overall' | 'closest_open' | 'lowest_price' | 'standard';
+  paretoBadge?: string;
+  whyThisShop?: string[];
   verificationCallLog?: {
     verifiedAt: string;
     verifiedPrice: number;

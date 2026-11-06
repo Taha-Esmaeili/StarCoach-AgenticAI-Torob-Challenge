@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShopOffer, Product } from '../types';
+import { fetchFallbackStore, mapDtoToShopOffer } from '../api/client';
 import {
   MapPin,
   X,
@@ -16,6 +17,7 @@ import {
   Receipt,
   PhoneCall,
   CheckSquare,
+  Building,
 } from 'lucide-react';
 
 interface ShoppingCompanionModalProps {
@@ -46,6 +48,35 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
   );
   const [reportedPriceInput, setReportedPriceInput] = useState('');
   const [discrepancyReported, setDiscrepancyReported] = useState(false);
+  const [fallbackData, setFallbackData] = useState<{
+    bannerFa: string;
+    offer: ShopOffer;
+  } | null>(null);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+
+  const handleToggleClosedIssue = async () => {
+    const next = activeIssue === 'closed' ? null : 'closed';
+    setActiveIssue(next);
+    if (next === 'closed' && !fallbackData) {
+      setFallbackLoading(true);
+      try {
+        const res = await fetchFallbackStore(
+          offer.id,
+          offer.coordinates.lat,
+          offer.coordinates.lng,
+          [offer.shopId]
+        );
+        setFallbackData({
+          bannerFa: res.banner_fa,
+          offer: mapDtoToShopOffer(res.alternative_store),
+        });
+      } catch {
+        setFallbackData(null);
+      } finally {
+        setFallbackLoading(false);
+      }
+    }
+  };
 
   // Test Checklist State
   const [checkList, setCheckList] = useState({
@@ -206,9 +237,30 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                   </button>
                 </div>
 
+                {(offer.mallName || offer.mallFloor || offer.mallUnit) && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {offer.mallName && (
+                      <span className="px-2.5 py-1 rounded-lg bg-[#1d1d2b] border border-[#2f2f45] text-white font-bold flex items-center gap-1 text-[11px]">
+                        <Building className="w-3.5 h-3.5 text-[#ff6688]" />
+                        <span>{offer.mallName}</span>
+                      </span>
+                    )}
+                    {offer.mallFloor && (
+                      <span className="px-2.5 py-1 rounded-lg bg-[#271825] border border-[#e9325a]/40 text-[#ff80a0] font-bold text-[11px]">
+                        {offer.mallFloor}
+                      </span>
+                    )}
+                    {offer.mallUnit && (
+                      <span className="px-2.5 py-1 rounded-lg bg-[#18252b] border border-sky-500/40 text-sky-300 font-bold text-[11px]">
+                        {offer.mallUnit}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {offer.mallNote && (
                   <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
-                    <span className="font-bold text-neutral-300">راهنما:</span>
+                    <span className="font-bold text-neutral-300">راهنمای داخل پاساژ:</span>
                     <span>{offer.mallNote}</span>
                   </div>
                 )}
@@ -478,9 +530,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
               {/* Option 2: Closed Shop */}
               <button
-                onClick={() =>
-                  setActiveIssue(activeIssue === 'closed' ? null : 'closed')
-                }
+                onClick={handleToggleClosedIssue}
                 className={`p-2.5 rounded-xl border text-right transition-all ${
                   activeIssue === 'closed'
                     ? 'bg-[#291b22] border-[#e9325a] text-white'
@@ -489,7 +539,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
               >
                 <Store className="w-3.5 h-3.5 text-[#ff4d79] mb-1" />
                 <div className="font-bold text-[11px]">مغازه بسته بود؟</div>
-                <div className="text-[10px] text-neutral-500">فروشگاه نزدیک ۵۰ متری</div>
+                <div className="text-[10px] text-neutral-500">فروشگاه جایگزین باز</div>
               </button>
 
               {/* Option 3: Contact Store */}
@@ -548,24 +598,69 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
               </div>
             )}
 
-            {/* EXPANDED CONTENT: Closed / Alternative */}
+            {/* EXPANDED CONTENT: Closed / Alternative (`T027`) */}
             {activeIssue === 'closed' && (
-              <div className="p-3.5 rounded-2xl bg-[#1f1620] border border-[#ff4d79]/40 space-y-2 animate-fade-in">
+              <div className="p-3.5 rounded-2xl bg-[#1f1620] border border-[#ff4d79]/40 space-y-2.5 animate-fade-in">
                 <div className="flex items-center gap-1.5 font-bold text-[#ff80a0]">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>فروشگاه جایگزین در ۵۰ متری:</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-[#14141d] border border-[#2b2b3d] flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-white">فروشگاه تکنولند جمهوری</div>
-                    <div className="text-[10px] text-neutral-400">
-                      ۲ دقیقه پیاده · موجودی کالا
-                    </div>
-                  </div>
-                  <span className="font-black text-emerald-400">
-                    {(offer.price + 200000).toLocaleString('fa-IR')} تومان
+                  <RefreshCw className={`w-3.5 h-3.5 ${fallbackLoading ? 'animate-spin' : ''}`} />
+                  <span>
+                    {fallbackData
+                      ? fallbackData.bannerFa
+                      : 'نزدیک‌ترین فروشگاه باز جایگزین:'}
                   </span>
                 </div>
+                {fallbackLoading ? (
+                  <div className="text-xs text-neutral-300 py-1">
+                    در حال جستجوی فروشگاه جایگزین باز در همان پاساژ یا خیابان...
+                  </div>
+                ) : fallbackData ? (
+                  <div className="p-3 rounded-xl bg-[#14141d] border border-[#2b2b3d] space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-extrabold text-white text-xs">
+                          {fallbackData.offer.shopName}
+                        </div>
+                        <div className="text-[10px] text-neutral-400 mt-0.5">
+                          {[
+                            fallbackData.offer.mallName,
+                            fallbackData.offer.mallFloor,
+                            fallbackData.offer.mallUnit,
+                          ]
+                            .filter(Boolean)
+                            .join(' • ') || fallbackData.offer.address}
+                        </div>
+                      </div>
+                      <span className="font-black text-emerald-400 text-xs shrink-0">
+                        {fallbackData.offer.price.toLocaleString('fa-IR')} تومان
+                      </span>
+                    </div>
+                    {onSwitchOffer && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSwitchOffer(fallbackData.offer);
+                          setActiveIssue(null);
+                          setCurrentStep(1);
+                        }}
+                        className="w-full py-2 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-xs transition-colors cursor-pointer"
+                      >
+                        انتخاب و تغییر مسیر به این فروشگاه جایگزین
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-[#14141d] border border-[#2b2b3d] flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white">فروشگاه تکنولند جمهوری</div>
+                      <div className="text-[10px] text-neutral-400">
+                        ۲ دقیقه پیاده · موجودی تاییدشده
+                      </div>
+                    </div>
+                    <span className="font-black text-emerald-400">
+                      {(offer.price + 200000).toLocaleString('fa-IR')} تومان
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 

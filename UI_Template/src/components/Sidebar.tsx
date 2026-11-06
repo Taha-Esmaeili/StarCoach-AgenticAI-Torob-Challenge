@@ -1,6 +1,7 @@
 import React from 'react';
-import { Plus, MessageSquare, CheckCircle2, Store, CreditCard, Clock, X } from 'lucide-react';
+import { Plus, MessageSquare, CheckCircle2, Store, CreditCard, Clock, X, SlidersHorizontal } from 'lucide-react';
 import { TorobLogo } from './TorobLogo';
+import type { ActiveWeightSlotDto } from '../api/client';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -13,6 +14,8 @@ interface SidebarProps {
   setFilterTorobPay: (val: boolean) => void;
   filterInstallment: boolean;
   setFilterInstallment: (val: boolean) => void;
+  activeWeights?: ActiveWeightSlotDto[];
+  onWeightChange?: (key: string, val: number) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -26,6 +29,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setFilterTorobPay,
   filterInstallment,
   setFilterInstallment,
+  activeWeights,
+  onWeightChange,
 }) => {
   const historyItems = [
     { title: 'من یک اسکوتر برقی مناسب می‌خوام', time: 'امروز' },
@@ -146,6 +151,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </label>
               </div>
             </div>
+
+            {/* Live 15-Parameter Adaptive RecSys Weights (`T019`) */}
+            {activeWeights && activeWeights.length > 0 && (
+              <div className="pt-3 border-t border-[#1c1c24]">
+                <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 px-2 mb-2">
+                  <span className="flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-[#ff4d79]" />
+                    <span>وزن‌های ۱۵گانه الگوریتم (L1=۱۰۰٪)</span>
+                  </span>
+                  <span className="text-[10px] text-[#ff7597] font-mono">
+                    {activeWeights.length.toLocaleString('fa-IR')} پارامتر
+                  </span>
+                </div>
+
+                <div className="space-y-2 px-1 max-h-56 overflow-y-auto pr-1">
+                  {activeWeights.slice(0, 8).map((slot) => (
+                    <div
+                      key={slot.key}
+                      className="p-2 rounded-xl bg-[#13131b] border border-[#20202c] space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-neutral-200 font-semibold truncate">
+                          {slot.label_fa}
+                        </span>
+                        <span className="text-[#ff6688] font-bold font-mono text-[10px]">
+                          {Math.round(slot.weight * 100).toLocaleString('fa-IR')}٪
+                        </span>
+                      </div>
+                      {onWeightChange && (
+                        <input
+                          type="range"
+                          min={0.05}
+                          max={0.98}
+                          step={0.05}
+                          value={slot.unconstrained_weight}
+                          onChange={(e) =>
+                            onWeightChange(slot.key, parseFloat(e.target.value))
+                          }
+                          className="w-full h-1.5 accent-[#e9325a] cursor-pointer"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer: User profile matching video ("Taha Gonaadi") with TorobLogo */}
