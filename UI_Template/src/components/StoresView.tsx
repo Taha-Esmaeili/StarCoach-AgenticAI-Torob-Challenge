@@ -1,26 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ShopOffer, UserLocation, Product } from '../types';
-import { USER_LOCATIONS } from '../data/mockData';
 import {
   MapPin,
   Clock,
+  Store,
   PhoneCall,
-  CreditCard,
-  Compass,
-  ShieldCheck,
-  ChevronDown,
-  Copy,
-  Check,
+  CheckCircle2,
+  Building,
+  Sparkles,
   Navigation,
+  RefreshCw,
 } from 'lucide-react';
+import { InteractiveMap } from './InteractiveMap';
+import { fetchFallbackStore, mapDtoToShopOffer } from '../api/client';
 
 interface StoresViewProps {
   offers: ShopOffer[];
+  selectedProduct: Product | null;
   userLocation: UserLocation;
-  setUserLocation: (loc: UserLocation) => void;
-  selectedProduct: Product;
   onStartVoiceCall: (offer: ShopOffer) => void;
-  onStartShoppingTrip: (offer: ShopOffer) => void;
+  onStartShoppingTrip?: (offer: ShopOffer) => void;
   filterOpenOnly: boolean;
   filterTorobPay: boolean;
   filterInstallment: boolean;
@@ -28,350 +27,455 @@ interface StoresViewProps {
 
 export const StoresView: React.FC<StoresViewProps> = ({
   offers,
-  userLocation,
-  setUserLocation,
   selectedProduct,
+  userLocation,
   onStartVoiceCall,
   onStartShoppingTrip,
   filterOpenOnly,
   filterTorobPay,
   filterInstallment,
 }) => {
-  const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [showBackupFor, setShowBackupFor] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'smart' | 'price' | 'distance'>('smart');
+  const [selectedMall, setSelectedMall] = useState<string>('all');
+  const [showBackupMap, setShowBackupMap] = useState<Record<string, boolean>>({});
+  const [liveFallbacks, setLiveFallbacks] = useState<
+    Record<string, { bannerFa: string; offer: ShopOffer } | 'loading'>
+  >({});
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
 
-  // Filter offers based on active settings (without restrictive mall tags)
-  const filteredOffers = offers.filter((offer) => {
-    if (filterOpenOnly && !offer.isOpenNow) return false;
-    if (filterTorobPay && !offer.torobPayAccepted) return false;
-    if (filterInstallment && offer.installmentOptions.length === 0) return false;
-    return true;
-  });
+  const toggleBackupOffer = async (offer: ShopOffer) => {
+    const nextVisible = !showBackupMap[offer.id];
+    setShowBackupMap((prev) => ({
+      ...prev,
+      [offer.id]: nextVisible,
+    }));
 
-  const handleCopyAddress = (id: string, address: string) => {
-    navigator.clipboard?.writeText(address);
-    setCopiedId(id);
-    setTimeout(() => {
-      setCopiedId(null);
-    }, 2000);
+    if (nextVisible && !liveFallbacks[offer.id]) {
+      setLiveFallbacks((prev) => ({ ...prev, [offer.id]: 'loading' }));
+      try {
+        const res = await fetchFallbackStore(
+          offer.id,
+          userLocation.lat,
+          userLocation.lng,
+          [offer.shopId]
+        );
+        setLiveFallbacks((prev) => ({
+          ...prev,
+          [offer.id]: {
+            bannerFa: res.banner_fa,
+            offer: mapDtoToShopOffer(res.alternative_store),
+          },
+        }));
+      } catch {
+        const localAlt =
+          offers.find((o) => o.id !== offer.id && o.isOpenNow) ||
+          offers.find((o) => o.id !== offer.id);
+        if (localAlt) {
+          setLiveFallbacks((prev) => ({
+            ...prev,
+            [offer.id]: {
+              bannerFa: `نزدیک‌ترین فروشگاه جایگزین (${localAlt.distanceKm.toLocaleString('fa-IR')} کیلومتر):`,
+              offer: localAlt,
+            },
+          }));
+        }
+      }
+    }
   };
 
-  const toggleExpand = (id: string) => {
-    setExpandedOfferId((prev) => (prev === id ? null : id));
-  };
+  // Extract unique malls/clusters
+  const malls = useMemo(() => {
+    const set = new Set<string>();
+    offers.forEach((o) => {
+      if (o.mallName) set.add(o.mallName);
+    });
+    return Array.from(set);
+  }, [offers]);
+
+  // Filter and sort offers
+  const filteredOffers = useMemo(() => {
+    return offers
+      .filter((o) => {
+        if (selectedProduct && o.productId !== selectedProduct.id) return false;
+        if (filterOpenOnly && !o.isOpenNow) return false;
+        if (filterTorobPay && !o.torobPayAccepted) return false;
+        if (filterInstallment && o.installmentOptions.length === 0) return false;
+        if (selectedMall !== 'all' && o.mallName !== selectedMall) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'price') return a.price - b.price;
+        if (sortBy === 'distance') return a.distanceKm - b.distanceKm;
+        if (a.utilityScore !== undefined && b.utilityScore !== undefined) {
+          return b.utilityScore - a.utilityScore;
+        }
+        const scoreA =
+          a.price / 1000000 +
+          a.distanceKm * 0.45 -
+          (a.isOpenNow ? 2 : 0) -
+          (a.torobPayAccepted ? 1 : 0);
+        const scoreB =
+          b.price / 1000000 +
+          b.distanceKm * 0.45 -
+          (b.isOpenNow ? 2 : 0) -
+          (b.torobPayAccepted ? 1 : 0);
+        return scoreA - scoreB;
+      });
+  }, [
+    offers,
+    selectedProduct,
+    filterOpenOnly,
+    filterTorobPay,
+    filterInstallment,
+    selectedMall,
+    sortBy,
+  ]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#0c0c10] space-y-4 font-sans select-none">
-      <div className="max-w-4xl mx-auto space-y-4">
-        {/* Compact Product Banner */}
-        <div className="p-3.5 md:p-4 rounded-2xl bg-[#14141a] border border-[#24242e] flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl overflow-hidden bg-black border border-[#282834] shrink-0">
-              <img
-                src={selectedProduct.image}
-                alt={selectedProduct.title}
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <div>
-              <h2 className="text-sm font-black text-white leading-tight">
-                {selectedProduct.title}
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#0c0c10] font-sans">
+      <div className="max-w-4xl mx-auto space-y-5">
+        {/* Top Filter & Sort Bar */}
+        <div className="p-4 rounded-2xl bg-[#13131a] border border-[#1f1f2a] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Store className="w-4 h-4 text-[#e9325a]" />
+              <h2 className="text-sm md:text-base font-extrabold text-white">
+                فروشگاه‌های حضوری تهران{' '}
+                {selectedProduct ? `(${selectedProduct.title})` : ''}
               </h2>
-              <div className="text-xs text-neutral-400 flex items-center gap-2 mt-1 flex-wrap">
-                <span>کف قیمت تهران:</span>
-                <span className="text-emerald-400 font-black">
-                  {selectedProduct.minPrice.toLocaleString('fa-IR')} تومان
-                </span>
-                <span>·</span>
-                <div className="flex items-center gap-1 text-neutral-300">
-                  <MapPin className="w-3.5 h-3.5 text-[#e9325a]" />
-                  <span>محله شما:</span>
-                  <select
-                    value={userLocation.id}
-                    onChange={(e) => {
-                      const loc = USER_LOCATIONS.find((l) => l.id === e.target.value);
-                      if (loc) setUserLocation(loc);
-                    }}
-                    className="bg-[#1c1c24] text-white text-xs px-2 py-0.5 rounded-lg border border-[#2b2b36] focus:outline-none cursor-pointer"
-                  >
-                    {USER_LOCATIONS.map((loc) => (
-                      <option key={loc.id} value={loc.id} className="bg-[#14141a]">
-                        {loc.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
             </div>
+            <p className="text-xs text-neutral-400 mt-1">
+              مقایسه هوشمند قیمت حضوری، مسافت، طبقه/واحد پاساژ و شرایط اقساطی از مبدا{' '}
+              <span className="text-neutral-200 font-semibold">{userLocation.name}</span>
+            </p>
           </div>
 
-          <div className="text-left sm:text-right shrink-0">
-            <span className="text-xs font-bold text-neutral-300">
-              {filteredOffers.length} فروشگاه حضوری فعال
-            </span>
+          {/* Sort Tabs */}
+          <div className="flex items-center gap-1.5 bg-[#0c0c10] p-1 rounded-xl border border-[#22222d]">
+            {[
+              { id: 'smart', label: 'امتیاز ۱۵گانه ترب‌چیت' },
+              { id: 'price', label: 'کمترین قیمت' },
+              { id: 'distance', label: 'نزدیک‌ترین' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setSortBy(tab.id as 'smart' | 'price' | 'distance')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  sortBy === tab.id
+                    ? 'bg-[#e9325a] text-white'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Streamlined Store Cards */}
-        <div className="space-y-3">
-          {filteredOffers.length === 0 ? (
-            <div className="text-center py-10 p-4 bg-[#14141a] rounded-2xl border border-[#202028] text-neutral-400 text-xs">
-              فروشگاهی با فیلترهای انتخابی شما یافت نشد.
-            </div>
-          ) : (
-            filteredOffers.map((offer, index) => {
-              const isExpanded = expandedOfferId === offer.id;
-              const isBackupOpen = showBackupFor === offer.id;
+        {/* Interactive Dark-Mode Tehran Leaflet Map (`T021`) */}
+        <InteractiveMap
+          offers={filteredOffers.length > 0 ? filteredOffers : offers}
+          userLocation={userLocation}
+          selectedOfferId={selectedOfferId}
+          onSelectOffer={(offer) => setSelectedOfferId(offer.id)}
+          onStartShoppingTrip={onStartShoppingTrip}
+        />
 
+        {/* Mall / Cluster Quick Chips */}
+        {malls.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <span className="text-xs text-neutral-400 shrink-0 flex items-center gap-1">
+              <Building className="w-3.5 h-3.5 text-[#ff6688]" />
+              بورس و پاساژها:
+            </span>
+            <button
+              onClick={() => setSelectedMall('all')}
+              className={`px-3 py-1 rounded-xl text-xs font-semibold shrink-0 border transition-colors ${
+                selectedMall === 'all'
+                  ? 'bg-[#e9325a]/15 border-[#e9325a] text-[#ff4d79]'
+                  : 'bg-[#14141c] border-[#22222d] text-neutral-400 hover:text-white'
+              }`}
+            >
+              همه مراکز خرید ({offers.length.toLocaleString('fa-IR')})
+            </button>
+            {malls.map((mall) => (
+              <button
+                key={mall}
+                onClick={() => setSelectedMall(mall)}
+                className={`px-3 py-1 rounded-xl text-xs font-semibold shrink-0 border transition-colors ${
+                  selectedMall === mall
+                    ? 'bg-[#e9325a]/15 border-[#e9325a] text-[#ff4d79]'
+                    : 'bg-[#14141c] border-[#22222d] text-neutral-400 hover:text-white'
+                }`}
+              >
+                {mall}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Store Offers List */}
+        {filteredOffers.length === 0 ? (
+          <div className="p-12 rounded-2xl bg-[#13131a] border border-[#1f1f2a] text-center space-y-2">
+            <p className="text-sm font-bold text-neutral-300">
+              فروشگاهی با این فیلترها یافت نشد.
+            </p>
+            <p className="text-xs text-neutral-500">
+              فیلترهای سایدبار یا پاساژ انتخابی را تغییر دهید.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3.5">
+            {filteredOffers.map((offer, index) => {
+              const fallbackEntry = liveFallbacks[offer.id];
               return (
                 <div
                   key={offer.id}
-                  className={`rounded-2xl bg-[#14141a] border transition-all duration-200 ${
-                    isExpanded
-                      ? 'border-[#e9325a]/70 shadow-lg shadow-[#e9325a]/10 bg-[#161620]'
-                      : 'border-[#22222c] hover:border-[#353545]'
+                  onClick={() => setSelectedOfferId(offer.id)}
+                  className={`p-4 md:p-5 rounded-2xl transition-all border ${
+                    index === 0 && sortBy === 'smart'
+                      ? 'torob-gradient-border bg-[#14141d]'
+                      : selectedOfferId === offer.id
+                        ? 'bg-[#171723] border-[#e9325a]'
+                        : 'bg-[#13131a] border-[#20202c] hover:border-[#2e2e40]'
                   }`}
                 >
-                  {/* Clean, Scannable Primary Card Row */}
-                  <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3.5">
-                    {/* Right side: Rank + Store Name + Mall/Neighborhood & Distance */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="w-7 h-7 rounded-lg bg-[#1f1f2a] text-neutral-300 font-black text-xs flex items-center justify-center shrink-0 border border-[#2e2e3d]">
-                        {(index + 1).toLocaleString('fa-IR')}
-                      </span>
+                  {/* Top Badge Row (Pareto Role + Utility Score) */}
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {(offer.paretoBadge || (index === 0 && sortBy === 'smart')) && (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#ff4d79] bg-[#e9325a]/15 px-2.5 py-0.5 rounded-lg border border-[#e9325a]/30">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>
+                            {offer.paretoBadge ||
+                              'بهترین توازن قیمت و مسافت برای مراجعه حضوری'}
+                          </span>
+                        </span>
+                      )}
+                      {offer.utilityScore !== undefined && (
+                        <span className="text-[11px] font-extrabold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg">
+                          امتیاز مطلوبیت: {offer.utilityScore.toLocaleString('fa-IR')}٪
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-neutral-400">
+                      امتیاز عملکرد در ترب:{' '}
+                      <strong className="text-white">
+                        {offer.reputationScore.toLocaleString('fa-IR')} از ۵
+                      </strong>
+                    </span>
+                  </div>
 
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-sm font-extrabold text-white truncate">
-                            {offer.shopName}
-                          </h3>
-                          {offer.isRealShop && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
-                              رسمی
-                            </span>
-                          )}
-                          {offer.torobPayAccepted && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[#e9325a]/15 text-[#ff6688] border border-[#e9325a]/30 shrink-0">
-                              ترب‌پی
-                            </span>
-                          )}
-                        </div>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    {/* Right Info */}
+                    <div className="space-y-2.5 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm md:text-base font-extrabold text-white">
+                          {offer.shopName}
+                        </h3>
 
-                        {/* Summary Location Line: No Floor, Clean Persian Typography for Distance */}
-                        <div className="flex items-center gap-2 text-xs text-neutral-400 mt-1 flex-wrap">
-                          <span className="text-neutral-200 font-medium">
-                            {offer.mallName || offer.neighborhood}
+                        {offer.isRealShop && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
+                            فروشگاه رسمی تاییدشده در ترب
                           </span>
-                          <span>·</span>
-                          <span className="text-amber-300 font-bold">
-                            {offer.distanceKm.toLocaleString('fa-IR')} کیلومتر
+                        )}
+
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded-md font-semibold ${
+                            offer.isOpenNow
+                              ? 'bg-emerald-500/10 text-emerald-400'
+                              : 'bg-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          {offer.isOpenNow
+                            ? `باز است (${offer.workingHours})`
+                            : `بسته (${offer.workingHours})`}
+                        </span>
+                      </div>
+
+                      {/* Indoor Mall Micro-Navigation (`پاساژ / طبقه / واحد`) & Address (`T022`) */}
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-300">
+                        {offer.mallName && (
+                          <span className="px-2.5 py-0.5 rounded-lg bg-[#1d1d28] border border-[#2c2c3c] text-white font-semibold flex items-center gap-1">
+                            <Building className="w-3 h-3 text-[#ff6688]" />
+                            <span>{offer.mallName}</span>
                           </span>
-                          <span>·</span>
-                          <span
-                            className={`text-[11px] font-semibold ${
-                              offer.isOpenNow ? 'text-emerald-400' : 'text-neutral-500'
-                            }`}
-                          >
-                            {offer.isOpenNow ? 'باز است' : 'بسته'}
+                        )}
+                        {offer.mallFloor && (
+                          <span className="px-2 py-0.5 rounded-lg bg-[#251824] border border-[#e9325a]/40 text-[#ff80a0] font-bold text-[11px]">
+                            {offer.mallFloor}
                           </span>
+                        )}
+                        {offer.mallUnit && (
+                          <span className="px-2 py-0.5 rounded-lg bg-[#1b2428] border border-sky-500/30 text-sky-300 font-bold text-[11px]">
+                            {offer.mallUnit}
+                          </span>
+                        )}
+                        <span>{offer.address}</span>
+                      </div>
+
+                      {/* Why This Shop Attribution Chips */}
+                      {offer.whyThisShop && offer.whyThisShop.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          {offer.whyThisShop.map((reason, rIdx) => (
+                            <span
+                              key={rIdx}
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-[#191926] border border-[#2b2b3d] text-neutral-300"
+                            >
+                              ✦ {reason}
+                            </span>
+                          ))}
                         </div>
+                      )}
+
+                      {/* Distance, Freshness & Payment Options */}
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-neutral-400 pt-1">
+                        <span className="flex items-center gap-1 text-amber-300 font-semibold">
+                          <MapPin className="w-3.5 h-3.5" />
+                          {offer.distanceKm.toLocaleString('fa-IR')} کیلومتر فاصله (~
+                          {offer.estimatedDrivingMins.toLocaleString('fa-IR')} دقیقه با خودرو)
+                        </span>
+
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          بروزرسانی قیمت: {offer.lastUpdated}
+                        </span>
+
+                        {offer.torobPayAccepted && (
+                          <span className="flex items-center gap-1 text-[#ff4d79] font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            ترب‌پی حضوری فعال
+                          </span>
+                        )}
+
+                        {offer.installmentOptions.length > 0 && (
+                          <span className="text-neutral-300">
+                            اقساط: {offer.installmentOptions.join(' ، ')}
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {/* Left side: Price & Action Buttons */}
-                    <div className="flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-[#1f1f28] shrink-0">
-                      <div className="text-right">
-                        <span className="text-[10px] text-neutral-500 block leading-tight">
-                          قیمت حضوری
-                        </span>
-                        <span className="text-base font-black text-white">
-                          {offer.price.toLocaleString('fa-IR')}
-                          <span className="text-xs font-normal text-neutral-400 mr-1">
-                            تومان
-                          </span>
-                        </span>
+                    {/* Left Price & Actions */}
+                    <div className="flex sm:flex-row md:flex-col items-start sm:items-center md:items-end justify-between gap-3 pt-3 md:pt-0 border-t md:border-t-0 border-[#20202b]">
+                      <div className="text-right md:text-left">
+                        <div className="text-[11px] text-neutral-400">قیمت خرید حضوری:</div>
+                        <div className="text-base md:text-lg font-black text-white">
+                          {offer.price.toLocaleString('fa-IR')}{' '}
+                          <span className="text-xs font-normal text-neutral-400">تومان</span>
+                        </div>
+                        <div className="text-[10px] text-emerald-400">{offer.warranty}</div>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        {/* Live Shopping Companion Button */}
-                        <button
-                          onClick={() => onStartShoppingTrip(offer)}
-                          className="px-3 py-2 rounded-xl bg-gradient-to-r from-[#e9325a] to-[#ff4d79] hover:opacity-90 text-white text-xs font-black flex items-center gap-1.5 shadow-md shadow-[#e9325a]/25 hover:scale-[1.02] active:scale-95 transition-all"
-                          title="همراهی هوشمند در طول مسیر، تست کالا در مغازه و پرداخت امن"
-                        >
-                          <Navigation className="w-3.5 h-3.5" />
-                          <span>همراهی خرید</span>
-                        </button>
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        {onStartShoppingTrip && (
+                          <button
+                            onClick={() => onStartShoppingTrip(offer)}
+                            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#e9325a] to-[#ff4d79] hover:opacity-90 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-[#e9325a]/25 transition-all cursor-pointer"
+                          >
+                            <Navigation className="w-3.5 h-3.5" />
+                            <span>همراهی گام‌به‌گام خرید</span>
+                          </button>
+                        )}
 
-                        {/* Details & Address Toggle Button */}
-                        <button
-                          onClick={() => toggleExpand(offer.id)}
-                          className={`px-2.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-all ${
-                            isExpanded
-                              ? 'bg-[#242432] text-white border border-[#3b3b4f]'
-                              : 'bg-[#1b1b24] text-neutral-300 hover:text-white hover:bg-[#22222e] border border-[#282836]'
-                          }`}
-                        >
-                          <MapPin className="w-3.5 h-3.5 text-[#ff6688]" />
-                          <span className="hidden sm:inline">
-                            {isExpanded ? 'بستن' : 'آدرس'}
-                          </span>
-                          <ChevronDown
-                            className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                              isExpanded ? 'rotate-180 text-white' : 'text-neutral-400'
-                            }`}
-                          />
-                        </button>
-
-                        {/* Contact Store CTA */}
                         <button
                           onClick={() => onStartVoiceCall(offer)}
-                          className="p-2 sm:px-3 sm:py-2 rounded-xl bg-[#20202c] hover:bg-[#2a2a3b] text-neutral-200 hover:text-white border border-[#2f2f42] text-xs font-bold flex items-center gap-1.5 transition-all"
-                          title="اطلاعات و تماس مستقیم با فروشگاه"
+                          className="px-3 py-2 rounded-xl bg-[#1f1f2e] hover:bg-[#2a2a3d] text-neutral-200 border border-[#34344a] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                          title="تماس با فروشگاه"
                         >
                           <PhoneCall className="w-3.5 h-3.5 text-[#ff80a0]" />
-                          <span className="hidden sm:inline">تماس با فروشگاه</span>
-                          <span className="sm:hidden">تماس</span>
+                          <span>اطلاعات تماس</span>
                         </button>
                       </div>
                     </div>
                   </div>
 
-                  {/* Expandable Details Section (revealed only upon request) */}
-                  {isExpanded && (
-                    <div className="px-4 pb-4 pt-3 border-t border-[#22222e] space-y-3.5 bg-[#121218]/60 rounded-b-2xl animate-fade-in">
-                      {/* Address & Navigation Card (No Floor) */}
-                      <div className="p-3.5 rounded-xl bg-[#181822] border border-[#282836] space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-start gap-2 text-xs">
-                            <MapPin className="w-4 h-4 text-[#ff4d79] shrink-0 mt-0.5" />
-                            <div>
-                              <div className="font-bold text-white leading-relaxed">
-                                {offer.address}
-                              </div>
-                              <div className="text-neutral-400 text-[11px] mt-1 flex items-center gap-2">
-                                <span>محدوده:</span>
-                                <span className="text-neutral-200 font-medium">
-                                  {offer.mallName || offer.neighborhood}
-                                </span>
-                              </div>
-                            </div>
+                  {/* Expandable Live 1-Tap Backup Store Rescue (`T023`) */}
+                  <div className="mt-3 pt-2.5 border-t border-[#1e1e2a]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBackupOffer(offer);
+                      }}
+                      className="text-[11px] font-bold text-amber-400/90 hover:text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <span>⚡</span>
+                      <span>
+                        {showBackupMap[offer.id]
+                          ? 'بستن پیشنهاد جایگزین فوری'
+                          : 'اگر مغازه بسته بود یا موجودی نداشت، فروشگاه جایگزین فوری چی داریم؟'}
+                      </span>
+                    </button>
+
+                    {showBackupMap[offer.id] && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-2 p-3 rounded-xl bg-[#181824] border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-fade-in"
+                      >
+                        {fallbackEntry === 'loading' ? (
+                          <div className="flex items-center gap-2 text-amber-300">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>در حال یافتن نزدیک‌ترین فروشگاه باز جایگزین در همان محدوده...</span>
                           </div>
-
-                          <button
-                            onClick={() => handleCopyAddress(offer.id, offer.address)}
-                            className="px-2.5 py-1.5 rounded-lg bg-[#222230] hover:bg-[#2d2d40] text-[11px] text-neutral-300 flex items-center gap-1.5 shrink-0 transition-colors border border-[#303042]"
-                            title="کپی آدرس برای نشان و بلد"
-                          >
-                            {copiedId === offer.id ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span className="text-emerald-400 font-bold">کپی شد!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3 text-neutral-400" />
-                                <span>کپی آدرس</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Walking Guidance / Location Note if available */}
-                        {offer.mallNote && (
-                          <div className="pt-2 border-t border-[#242432] flex items-start gap-2 text-xs text-neutral-300">
-                            <Compass className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                            <div className="leading-relaxed">
-                              <span className="font-bold text-neutral-200">
-                                راهنمای دسترسی:{' '}
+                        ) : fallbackEntry ? (
+                          <>
+                            <div className="space-y-1">
+                              <span className="font-bold text-amber-300 block">
+                                {fallbackEntry.bannerFa}
                               </span>
-                              <span className="text-neutral-300">{offer.mallNote}</span>
+                              <span className="text-neutral-200 font-extrabold block">
+                                {fallbackEntry.offer.shopName}{' '}
+                                {fallbackEntry.offer.mallName
+                                  ? `(${[
+                                      fallbackEntry.offer.mallName,
+                                      fallbackEntry.offer.mallFloor,
+                                      fallbackEntry.offer.mallUnit,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' • ')})`
+                                  : ''}
+                              </span>
+                              <span className="text-[11px] text-neutral-400 block">
+                                قیمت حضوری:{' '}
+                                <strong className="text-white">
+                                  {fallbackEntry.offer.price.toLocaleString('fa-IR')} تومان
+                                </strong>{' '}
+                                • وضعیت:{' '}
+                                <strong className="text-emerald-400">
+                                  {fallbackEntry.offer.isOpenNow ? 'هم‌اکنون باز' : 'ثبت‌شده'}
+                                </strong>
+                              </span>
                             </div>
-                          </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {onStartShoppingTrip && (
+                                <button
+                                  onClick={() => onStartShoppingTrip(fallbackEntry.offer)}
+                                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition-colors cursor-pointer"
+                                >
+                                  همراهی به فروشگاه جایگزین
+                                </button>
+                              )}
+                              <button
+                                onClick={() => onStartVoiceCall(fallbackEntry.offer)}
+                                className="px-2.5 py-1.5 rounded-xl bg-[#252536] hover:bg-[#303046] text-white font-bold text-xs transition-colors cursor-pointer"
+                              >
+                                تماس فوری
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-neutral-400">
+                            فروشگاه جایگزین دیگری در این شعاع یافت نشد.
+                          </span>
                         )}
                       </div>
-
-                      {/* Store Meta Badges Grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                        <div className="p-2.5 rounded-xl bg-[#181822] border border-[#252534]">
-                          <span className="text-[10px] text-neutral-400 block flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-neutral-400" />
-                            ساعات کاری
-                          </span>
-                          <span className="font-bold text-white text-[11px] mt-0.5 block truncate">
-                            {offer.workingHours}
-                          </span>
-                        </div>
-
-                        <div className="p-2.5 rounded-xl bg-[#181822] border border-[#252534]">
-                          <span className="text-[10px] text-neutral-400 block flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                            گارانتی
-                          </span>
-                          <span className="font-bold text-white text-[11px] mt-0.5 block truncate">
-                            {offer.warranty}
-                          </span>
-                        </div>
-
-                        <div className="p-2.5 rounded-xl bg-[#181822] border border-[#252534]">
-                          <span className="text-[10px] text-neutral-400 block flex items-center gap-1">
-                            <CreditCard className="w-3 h-3 text-[#ff4d79]" />
-                            شرایط اقساط
-                          </span>
-                          <span className="font-bold text-white text-[11px] mt-0.5 block truncate">
-                            {offer.installmentOptions.length > 0
-                              ? offer.installmentOptions.join('، ')
-                              : 'فقط نقدی'}
-                          </span>
-                        </div>
-
-                        <div className="p-2.5 rounded-xl bg-[#181822] border border-[#252534]">
-                          <span className="text-[10px] text-neutral-400 block flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-neutral-400" />
-                            به‌روزرسانی
-                          </span>
-                          <span className="font-bold text-white text-[11px] mt-0.5 block truncate">
-                            {offer.lastUpdated}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Emergency Backup Shop Drawer */}
-                      <div className="pt-1">
-                        <button
-                          onClick={() => setShowBackupFor(isBackupOpen ? null : offer.id)}
-                          className="text-[11px] text-neutral-400 hover:text-[#ff80a0] flex items-center gap-1.5 transition-colors"
-                        >
-                          <Navigation className="w-3 h-3 text-[#ff4d79]" />
-                          <span>
-                            {isBackupOpen
-                              ? 'بستن فروشگاه جایگزین'
-                              : 'اگر مغازه بسته بود، فروشگاه جایگزین در ۵۰ متری چی داریم؟'}
-                          </span>
-                        </button>
-
-                        {isBackupOpen && (
-                          <div className="mt-2 p-3 rounded-xl bg-[#1b1720] border border-[#ff4d79]/30 text-xs flex items-center justify-between gap-3 animate-fade-in">
-                            <div>
-                              <div className="font-bold text-white">فروشگاه تکنولند جمهوری</div>
-                              <div className="text-[11px] text-neutral-400 mt-0.5">
-                                در همان محدوده (۲ دقیقه پیاده)
-                              </div>
-                            </div>
-                            <span className="text-xs font-bold text-emerald-400 shrink-0">
-                              {(offer.price + 200000).toLocaleString('fa-IR')} تومان
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

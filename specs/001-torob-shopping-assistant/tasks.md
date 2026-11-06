@@ -54,10 +54,10 @@
 
 **Independent Test**: Submit an ambiguous prompt (`"یه هندزفری خوب میخوام"`) and a specific prompt (`"سریع‌ترین شارژر آیفون سمت ونک"`), verify `FeatureClarificationCard.tsx` triggers at most once initially, and verify clicking a pill or 👍/👎 dynamically updates weights in Redis/PostgreSQL and re-ranks stores.
 
-- [ ] T017 [US1] Implement `POST /api/v1/chat/turn` and `POST /api/v1/feedback` endpoints orchestrating `jev_engine`, `queries`, `redis_cache`, `scorer`, and `clarifier` in `backend/main.py`
-- [ ] T018 [P] [US1] Wire `FeatureClarificationCard.tsx` component (2–3 selectable Persian priority pills + round badge) to live `clarification_card` payloads in `UI_Template/src/components/FeatureClarificationCard.tsx`
-- [ ] T019 [P] [US1] Bind `ProfilePrioritiesModal.tsx` and the right-hand filter sidebar to live `recsys_state.active_weights` and `hard_constraints` in `UI_Template/src/components/ProfilePrioritiesModal.tsx` and `UI_Template/src/App.tsx`
-- [ ] T020 [US1] Connect `App.tsx` chat turn handler, `SearchingPapersAnimation.tsx` loading states, and `ThumbsUp`/`ThumbsDown` feedback buttons to live backend endpoints in `UI_Template/src/App.tsx`
+- [X] T017 [US1] Implement `POST /api/v1/chat/turn` and `POST /api/v1/feedback` endpoints orchestrating `jev_engine`, `queries`, `redis_cache`, `scorer`, and `clarifier` in `backend/main.py`
+- [X] T018 [P] [US1] Wire `FeatureClarificationCard.tsx` component (2–3 selectable Persian priority pills + round badge) to live `clarification_card` payloads in `UI_Template/src/components/FeatureClarificationCard.tsx`
+- [X] T019 [P] [US1] Bind `ProfilePrioritiesModal.tsx` and the right-hand filter sidebar to live `recsys_state.active_weights` and `hard_constraints` in `UI_Template/src/components/ProfilePrioritiesModal.tsx` and `UI_Template/src/App.tsx`
+- [X] T020 [US1] Connect `App.tsx` chat turn handler, `SearchingPapersAnimation.tsx` loading states, and `ThumbsUp`/`ThumbsDown` feedback buttons to live backend endpoints in `UI_Template/src/App.tsx`
 
 ---
 
@@ -67,9 +67,9 @@
 
 **Independent Test**: Search any stocked product, inspect the Pareto Top-3 badges (`بهترین انتخاب کلی`, `نزدیک‌ترین مغازه باز`, `کمترین قیمت`), verify `Why-This-Shop` pills, and pan/zoom the interactive Tehran map with custom price pins.
 
-- [ ] T021 [P] [US2] Upgrade `StoreCard.tsx` to display `pareto_badge_fa`, `why_this_shop_fa` attribution chips, `freshness_badge_fa`, installment provider pills (`ترب‌پی`, `اسنپ‌پی`), `تایید شده ترب` badge (for the 112 real shops), and the amber category-fallback notice in `UI_Template/src/components/StoreCard.tsx`
-- [ ] T022 [P] [US2] Install `leaflet` and `@types/leaflet` in `UI_Template/package.json` and upgrade `InteractiveMap.tsx` from mock SVG to a live dark-matter RTL Leaflet map of Tehran with custom Toman price pins, user GPS marker, and animated route polyline in `UI_Template/src/components/InteractiveMap.tsx`
-- [ ] T023 [US2] Synchronize store selection between `StoreCard.tsx`, `InteractiveMap.tsx`, and the user location selector (browser Geolocation API + Tehran neighborhood presets like `ولیعصر`, `جمهوری`, `ونک`, `صادقیه`) in `UI_Template/src/App.tsx`
+- [X] T021 [P] [US2] Upgrade `StoreCard.tsx` to display `pareto_badge_fa`, `why_this_shop_fa` attribution chips, `freshness_badge_fa`, installment provider pills (`ترب‌پی`, `اسنپ‌پی`), `تایید شده ترب` badge (for the 112 real shops), and the amber category-fallback notice in `UI_Template/src/components/StoreCard.tsx`
+- [X] T022 [P] [US2] Install `leaflet` and `@types/leaflet` in `UI_Template/package.json` and upgrade `InteractiveMap.tsx` from mock SVG to a live dark-matter RTL Leaflet map of Tehran with custom Toman price pins, user GPS marker, and animated route polyline in `UI_Template/src/components/InteractiveMap.tsx`
+- [X] T023 [US2] Synchronize store selection between `StoreCard.tsx`, `InteractiveMap.tsx`, and the user location selector (browser Geolocation API + Tehran neighborhood presets like `ولیعصر`, `جمهوری`, `ونک`, `صادقیه`) in `UI_Template/src/App.tsx`
 
 ---
 
@@ -79,10 +79,10 @@
 
 **Independent Test**: Compare 2 models via `ComparisonMatrix.tsx` to see real `products.specs_json` + live Tehran store counts; open `ShoppingCompanionModal.tsx` on a mall store to see extracted `پاساژ`/`طبقه`/`واحد` badges, and click **"مغازه بسته بود / موجود نداشت — جایگزین فوری"** to switch to the nearest open alternative in `< 300 ms`.
 
-- [ ] T024 [P] [US3] Implement `GET /api/v1/products/compare` endpoint extracting category-specific `specs_json` from PostgreSQL `products` and aggregating live Tehran open-store counts and minimum prices from `offers` in `backend/main.py` and `backend/db/queries.py`
-- [ ] T025 [P] [US3] Upgrade `ComparisonMatrix.tsx` to render dynamic category spec rows, live in-person minimum price, open store counts, and 1-tap "مشاهده فروشندگان حضوری این مدل" action in `UI_Template/src/components/ComparisonMatrix.tsx`
-- [ ] T026 [P] [US4] Implement `GET /api/v1/stores/{offer_id}/fallback` endpoint (prioritizing open stores in the same `mall_name` first, then nearest street stores with `w_distance` and `w_open_now` boosted) in `backend/main.py` and `backend/db/queries.py`
-- [ ] T027 [US4] Upgrade `ShoppingCompanionModal.tsx` and `StoreContactModal.tsx` with extracted `mall_micro_guide` (`پاساژ`/`طبقه`/`واحد`), `last_price_changed_at` freshness alert, callable `tel:` link, Instagram/Website links, and the 1-tap **"مغازه بسته بود / موجود نداشت — جایگزین فوری"** rescue flow in `UI_Template/src/components/ShoppingCompanionModal.tsx` and `UI_Template/src/components/StoreContactModal.tsx`
+- [X] T024 [P] [US3] Implement `GET /api/v1/products/compare` endpoint extracting category-specific `specs_json` from PostgreSQL `products` and aggregating live Tehran open-store counts and minimum prices from `offers` in `backend/main.py` and `backend/db/queries.py`
+- [X] T025 [P] [US3] Upgrade `ComparisonMatrix.tsx` to render dynamic category spec rows, live in-person minimum price, open store counts, and 1-tap "مشاهده فروشندگان حضوری این مدل" action in `UI_Template/src/components/ComparisonMatrix.tsx`
+- [X] T026 [P] [US4] Implement `GET /api/v1/stores/{offer_id}/fallback` endpoint (prioritizing open stores in the same `mall_name` first, then nearest street stores with `w_distance` and `w_open_now` boosted) in `backend/main.py` and `backend/db/queries.py`
+- [X] T027 [US4] Upgrade `ShoppingCompanionModal.tsx` and `StoreContactModal.tsx` with extracted `mall_micro_guide` (`پاساژ`/`طبقه`/`واحد`), `last_price_changed_at` freshness alert, callable `tel:` link, Instagram/Website links, and the 1-tap **"مغازه بسته بود / موجود نداشت — جایگزین فوری"** rescue flow in `UI_Template/src/components/ShoppingCompanionModal.tsx` and `UI_Template/src/components/StoreContactModal.tsx`
 
 ---
 
@@ -92,9 +92,9 @@
 
 **⚠️ NOTE**: Execute this phase **only after Phases 1–6 are complete and locally verified**.
 
-- [ ] T028 [P] [US5] Configure FastAPI to serve the compiled `UI_Template/dist` static bundle and SPA fallback route in `backend/main.py`
-- [ ] T029 [P] [US5] Create multi-stage `Dockerfile` (building `UI_Template/dist` with Node 22 + running FastAPI with Python 3.11 and automatic PostgreSQL `pgvector` + Redis health/migration check) and `liara.json` in `Dockerfile` and `liara.json`
-- [ ] T030 [US5] Author the 5-minute Hackathon Demo Video script & rubric-mapped judge walkthrough in `DEMO_SCRIPT.md`
+- [X] T028 [P] [US5] Configure FastAPI to serve the compiled `UI_Template/dist` static bundle and SPA fallback route in `backend/main.py`
+- [X] T029 [P] [US5] Create multi-stage `Dockerfile` (building `UI_Template/dist` with Node 22 + running FastAPI with Python 3.11 and automatic PostgreSQL `pgvector` + Redis health/migration check) and `liara.json` in `Dockerfile` and `liara.json`
+- [X] T030 [US5] Author the 5-minute Hackathon Demo Video script & rubric-mapped judge walkthrough in `DEMO_SCRIPT.md`
 
 ---
 

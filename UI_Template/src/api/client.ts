@@ -54,10 +54,10 @@ export interface MallMicroGuideDto {
 }
 
 export interface ScoredStoreOfferDto {
-  offer_id: number;
-  product_id: number;
+  offer_id: string | number;
+  product_id: string | number;
   product_name: string;
-  shop_id: number;
+  shop_id: string | number;
   shop_name: string;
   price_toman: number;
   utility_score: number;
@@ -89,7 +89,7 @@ export interface ScoredStoreOfferDto {
 }
 
 export interface RecommendedProductDto {
-  product_id: number;
+  product_id: string | number;
   title: string;
   english_title: string;
   category_id: number;
@@ -237,6 +237,10 @@ export function mapDtoToShopOffer(dto: ScoredStoreOfferDto): ShopOffer {
     stockStatus: dto.is_category_fallback
       ? 'unconfirmed_in_catalog'
       : 'confirmed_in_stock',
+    utilityScore: dto.utility_score,
+    paretoRole: dto.pareto_role,
+    paretoBadge: dto.pareto_badge_fa || undefined,
+    whyThisShop: dto.why_this_shop_fa,
   };
 }
 
@@ -271,7 +275,7 @@ export async function postChatTurn(payload: {
   message: string;
   user_location: CoordinatesDto;
   ui_overrides?: UIOverridesDto;
-  selected_product_id?: number | null;
+  selected_product_id?: string | number | null;
 }): Promise<ChatTurnResponseDto> {
   const res = await fetch(`${API_BASE}/chat/turn`, {
     method: 'POST',

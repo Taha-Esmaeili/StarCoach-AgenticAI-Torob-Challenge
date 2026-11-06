@@ -30,6 +30,7 @@ interface ChatViewProps {
   onStartShoppingTrip?: (offer: ShopOffer) => void;
   onNavigateToStores: () => void;
   onSubmitFeatureClarification?: (messageId: string, answers: Record<string, string>) => void;
+  onFeedback?: (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -42,6 +43,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onStartShoppingTrip,
   onNavigateToStores,
   onSubmitFeatureClarification,
+  onFeedback,
 }) => {
   const [inputText, setInputText] = useState('');
   const [feedbackMap, setFeedbackMap] = useState<Record<string, 'like' | 'dislike'>>({});
@@ -356,10 +358,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
                                   {/* Structured Metadata LABELS */}
                                   <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                    {/* Location Label: No Floor */}
+                                    {/* Location + Indoor Floor/Unit Label */}
                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#252533] border border-[#37374b] text-neutral-200">
                                       <Building className="w-3 h-3 text-[#ff6688]" />
-                                      <span>{offer.mallName || offer.neighborhood}</span>
+                                      <span>
+                                        {[
+                                          offer.mallName || offer.neighborhood,
+                                          offer.mallFloor,
+                                          offer.mallUnit,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' • ')}
+                                      </span>
                                     </span>
 
                                     {/* Distance Label */}
@@ -451,20 +461,22 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         {!feedbackMap[msg.id] ? (
                           <div className="flex items-center gap-1">
                             <button
-                              onClick={() =>
-                                setFeedbackMap((prev) => ({ ...prev, [msg.id]: 'like' }))
-                              }
-                              className="p-1 rounded-md hover:bg-white/10 hover:text-emerald-400 text-neutral-400 transition-colors"
+                              onClick={() => {
+                                setFeedbackMap((prev) => ({ ...prev, [msg.id]: 'like' }));
+                                onFeedback?.(msg.id, 'thumbs_up');
+                              }}
+                              className="p-1 rounded-md hover:bg-white/10 hover:text-emerald-400 text-neutral-400 transition-colors cursor-pointer"
                               title="مفید بود"
                             >
                               <ThumbsUp className="w-3 h-3" />
                             </button>
                             <button
-                              onClick={() =>
-                                setFeedbackMap((prev) => ({ ...prev, [msg.id]: 'dislike' }))
-                              }
-                              className="p-1 rounded-md hover:bg-white/10 hover:text-[#ff4d79] text-neutral-400 transition-colors"
-                              title="مناسب نبود"
+                              onClick={() => {
+                                setFeedbackMap((prev) => ({ ...prev, [msg.id]: 'dislike' }));
+                                onFeedback?.(msg.id, 'thumbs_down');
+                              }}
+                              className="p-1 rounded-md hover:bg-white/10 hover:text-[#ff4d79] text-neutral-400 transition-colors cursor-pointer"
+                              title="مناسب نبود (اصلاح اولویت‌ها)"
                             >
                               <ThumbsDown className="w-3 h-3" />
                             </button>

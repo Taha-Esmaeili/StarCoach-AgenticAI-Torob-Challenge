@@ -491,8 +491,39 @@ async def fetch_fallback_store(
             limit=30,
         )
         filtered = [c for c in candidates if str(c["shop_id"]) not in excluded]
+
+        # Priority 3 Fallback: If no other shop stocks this exact product_id, find open stores in the same category/mall
         if not filtered:
-            return None
+            sim_rows = await conn.fetch(
+                """
+                SELECT o.product_id
+                FROM products p
+                JOIN offers o ON o.product_id = p.product_id
+                WHERE p.category_name = $1 AND o.shop_id != $2
+                LIMIT 10
+                """,
+                orig["category_name"],
+                str(orig["shop_id"]),
+            )
+            sim_pids = list({str(r["product_id"]) for r in sim_rows})
+            sim_candidates = await fetch_candidate_offers(
+                pg_pool,
+                sim_pids,
+                user_lat=ref_lat,
+                user_lng=ref_lng,
+                category_name=orig["category_name"],
+                limit=30,
+            )
+            sim_filtered = [c for c in sim_candidates if str(c["shop_id"]) not in excluded]
+            if not sim_filtered:
+                return None
+            open_sim = [c for c in sim_filtered if c["is_open_now"]]
+            best_sim = sorted(open_sim or sim_filtered, key=lambda x: (x["distance_km"], x["price_toman"]))[0]
+            return {
+                "fallback_type": "similar_product_nearby",
+                "banner_fa": f"فروشگاه جایگزین هم‌صنف در نزدیکی شما ({best_sim['distance_km']} کیلومتر فاصله):",
+                "alternative_store": best_sim,
+            }
 
         # Priority 1: Open store inside the exact same indoor mall (`mall_name`)
         same_mall = [
