@@ -70,6 +70,19 @@ class Settings(BaseSettings):
     recsys_default_persona_weights_json: str = (
         '{"w_installment":0.30,"w_warranty":0.40,"w_mall_cluster":0.30,"w_verified_shop":0.35,"w_delivery_backup":0.25}'
     )
+    recsys_default_store_weights_json: str = (
+        '{"w_price":0.30,"w_distance":0.30,"w_open_now":0.30,"w_trust_freshness":0.30,"w_installment":0.30}'
+    )
+
+    # Two-Stage Jev 5-Criteria & Domain-Scoped Trait Memory Hyperparameters
+    recsys_price_decay_ratio: float = 0.15
+    recsys_distance_decay_km: float = 8.0
+    recsys_mention_score_threshold: float = 0.35
+    recsys_unmentioned_tiebreaker_factor: float = 0.10
+    recsys_trait_cosine_candidate_threshold: float = 0.60
+    recsys_trait_jev_same_aspect_noul: float = 0.70
+    recsys_max_traits_per_query: int = 5
+    recsys_contrastive_feedback_lr: float = 0.15
 
     recsys_fusion_gamma: float = 0.85
     recsys_fusion_alpha_min: float = 0.15
@@ -135,6 +148,11 @@ class Settings(BaseSettings):
     def default_persona_weights(self) -> dict[str, float]:
         """Parse RECSYS_DEFAULT_PERSONA_WEIGHTS_JSON into a float dict."""
         return {k: float(v) for k, v in json.loads(self.recsys_default_persona_weights_json).items()}
+
+    @property
+    def default_store_weights(self) -> dict[str, float]:
+        """Parse RECSYS_DEFAULT_STORE_WEIGHTS_JSON into a 5-criteria float dict."""
+        return {k: float(v) for k, v in json.loads(self.recsys_default_store_weights_json).items()}
 
     @property
     def cors_origins_list(self) -> list[str]:

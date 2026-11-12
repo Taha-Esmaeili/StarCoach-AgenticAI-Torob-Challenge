@@ -1,10 +1,16 @@
 # Torob Smart In-Person Shopping Assistant — Complete RecSys Architecture & Scientific Documentation
 
 **Project**: دستیار هوشمند خرید حضوری ترب (StarCoach Agentic AI — Torob Challenge)  
-**Engine Version**: `v1.0` (Implemented in [`backend/recsys/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/backend/recsys/) & [`backend/db/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/backend/db/))  
-**Data Layer**: PostgreSQL 16+ (`pgvector` + `pg_trgm` + `JSONB` GIN) + Redis 7+ (`< 2 ms` session & profile cache)  
+**Engine Version**: `v2.0` — **Two-Stage Production Jev Architecture** ([`specs/002-jev-domain-recsys/spec.md`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/specs/002-jev-domain-recsys/spec.md), implemented in [`backend/recsys/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/backend/recsys/) & [`backend/db/`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/backend/db/))  
+**Data Layer**: PostgreSQL 16+ (`pgvector` + `pg_trgm` + `JSONB` GIN + `user_trait_memory`) + Redis 7+ (`< 2 ms` session & profile cache)  
 **Decision Model**: TypeSafe AI **`Jev` (`jev-1.14.0` / `jev-latest`) System One** + Calibrated OpenAI-Compatible Fallback  
 **Configuration Policy**: 100% `.env`-Driven ([`backend/config.py`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/backend/config.py) — Zero hardcoded entity variables or thresholds)
+
+> [!IMPORTANT]
+> **Architecture Upgrade (`v2.0` — Two-Stage Decoupled Design)**:
+> Following our scientific audit, the recommender is decoupled into two orthogonal stages:
+> 1. **Stage 1 — Domain-Scoped User Trait Memory (`user_trait_memory`)**: Dataset-agnostic, production-ready per-user, per-domain (`electronics`, `footwear_apparel`, `home_kitchen`, `sports_outdoors`, `beauty_health`, `tools_auto`, `culture_toys`, `general`) specialized traits separating `aspect` (embedded axis, e.g. `"وزن و ابعاد دستگاه"` or `"ارگونومی و ساختار کفی کفش"`) from `preference` (directional stance, e.g. `"سبک"` vs. `"بدنه سنگین و صنعتی"`). Online read takes `< 2 ms` via `pgvector`; extraction, polarity-safe deduplication (`aspect` cosine + `Jev` `Noul`), and upsert run asynchronously via `FastAPI BackgroundTasks` (`0 ms` added chat latency).
+> 2. **Stage 2 — 5 Orthogonal Store Criteria (`w_price`, `w_distance`, `w_open_now`, `w_trust_freshness`, `w_installment`)**: Uses a 3-level observability rubric (`0`: Not Mentioned, `1`: Mild Preference, `2`: Primary Emphasis), **Sparse Override** (preventing weight dilution so a single mentioned criterion receives $\ge 80\%$ weight), **Outlier-Resistant Relative Exponential Price Decay** ($\exp(-(P_i - P_{\min}) / (0.15 P_{\min}))$), and **Contrastive Revealed-Preference Learning** ($\mathbf{f}_{\text{selected}} - \bar{\mathbf{f}}_{\text{shown}}$) exclusively on `/api/v1/feedback`.
 
 ---
 

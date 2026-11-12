@@ -24,15 +24,20 @@ def should_trigger_clarification(
     clarification_count: int,
     explicit_thumbs_down: bool = False,
     dissatisfied_noul: float = 0.0,
+    needs_clarification_noul: float = 0.0,
 ) -> tuple[bool, int]:
     """Determine whether to display `FeatureClarificationCard` and return `(should_ask, next_count)`."""
     max_rounds = settings.recsys_max_clarification_rounds
     if clarification_count >= max_rounds:
         return False, clarification_count
 
-    # Turn 1 Low-Confidence Gate (at most once initially)
+    # Turn 1 Gate: Ask at most once initially when Jev detects broad/ambiguous intent (`needs_clarification >= 0.70`)
+    # or when effective_confidence falls below the configured threshold
     if clarification_count == 0:
-        if effective_confidence < settings.recsys_clarify_confidence_threshold:
+        if (
+            needs_clarification_noul >= settings.recsys_dissatisfied_noul_threshold
+            or effective_confidence < settings.recsys_clarify_confidence_threshold
+        ):
             return True, 1
         return False, 0
 

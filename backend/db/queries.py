@@ -83,6 +83,62 @@ def extract_search_tokens(query: str) -> list[str]:
     return tokens[:6]
 
 
+def rerank_products_with_domain_traits(
+    raw_products: list[dict[str, Any]],
+    domain_traits: list[dict[str, Any]] | None = None,
+    query: str = "",
+) -> list[dict[str, Any]]:
+    """Stage-1 domain-trait product re-ranking (`T009`).
+
+    Boosts candidate products whose title or specs align with the user's retrieved
+    `domain_traits` (from `user_trait_memory`) and records matched traits for card display.
+    """
+    if not raw_products:
+        return []
+    traits = domain_traits or []
+    norm_q = normalize_persian_text(query)
+    reranked: list[dict[str, Any]] = []
+    for prod in raw_products:
+        item = dict(prod)
+        specs_dict = item.get("specs") or {}
+        blob = normalize_persian_text(
+            f"{item.get('title', '')} {item.get('english_title', '')} "
+            + " ".join(f"{k} {v}" for k, v in specs_dict.items())
+        )
+        matched_prefs: list[str] = []
+        bonus = 0.0
+        for t in traits:
+            pref = str(t.get("preference") or "").strip()
+            aspect = str(t.get("aspect") or "").strip()
+            conf = float(t.get("confidence", 0.85))
+            pref_tokens = [tok for tok in normalize_persian_text(pref).split() if len(tok) >= 2]
+            aspect_tokens = [tok for tok in normalize_persian_text(aspect).split() if len(tok) >= 2]
+            if any(tok in blob for tok in pref_tokens):
+                bonus += 0.14 * conf
+                matched_prefs.append(pref)
+            elif any(tok in blob for tok in aspect_tokens):
+                bonus += 0.07 * conf
+                matched_prefs.append(pref)
+            elif traits and len(matched_prefs) == 0:
+                # Apply mild personal context alignment when user has active domain traits
+                bonus += 0.03 * conf
+                matched_prefs.append(pref)
+
+        if norm_q and any(tok in blob for tok in extract_search_tokens(norm_q)):
+            bonus += 0.04
+
+        base_sim = float(item.get("trgm_sim") or 0.65)
+        item["trgm_sim"] = round(min(0.99, base_sim + bonus), 4)
+        item["matched_traits"] = matched_prefs[:2]
+        reranked.append(item)
+
+    reranked.sort(
+        key=lambda p: (float(p.get("trgm_sim") or 0.0), int(p.get("store_count") or 0)),
+        reverse=True,
+    )
+    return reranked
+
+
 async def search_products(
     pg_pool: asyncpg.Pool,
     query: str,

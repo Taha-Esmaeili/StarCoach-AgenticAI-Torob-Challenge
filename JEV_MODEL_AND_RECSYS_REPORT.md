@@ -1,9 +1,11 @@
-# Technical & Data-Scientific Report: TypeSafe AI `Jev` Decision Model & The 15-Parameter Adaptive RecSys Architecture
+# Technical & Data-Scientific Report: TypeSafe AI `Jev` Decision Model & The Two-Stage Domain-Scoped RecSys Architecture
 
 ## Executive Summary
 This document provides:
 1. A deep architectural and mathematical analysis of **Jev** (`jev-1.14.0` / `jev-1.13.0`), the flagship **System One Decision Model** developed by **TypeSafe AI**.
-2. A rigorous **Data-Scientific Evaluation** of our proposed **15-Parameter Adaptive Recommender System (RecSys)** for the **Torob In-Person Shopping Assistant (ترب‌چیت حضوری)**, demonstrating how Jev's parallel typed primitives (`Score`, `Noul`, `Choice`) and calibrated `confidence` statistics mathematically solve the *Situational Intent vs. Long-Term Persona* paradox.
+2. A rigorous **Data-Scientific Evaluation** of our **Two-Stage Production Jev Recommender System** ([`specs/002-jev-domain-recsys/spec.md`](file:///home/tahaes/Desktop/CodeCave/StarCoach/AgenticAiHackaton/Torob/specs/002-jev-domain-recsys/spec.md)) for the **Torob In-Person Shopping Assistant (ترب‌چیت حضوری)**, demonstrating how we decouple:
+   - **Stage 1 (Product Selection — Domain-Scoped User Trait Memory)**: Per-user, per-domain (`electronics`, `footwear_apparel`, etc.) specialized traits in `user_trait_memory` separating `aspect` (embedded axis) from `preference` (directional stance) with polarity-safe in-place updates via `pgvector` + `Jev` `Noul` and `0 ms` background write latency.
+   - **Stage 2 (Physical Store Ranking — 5 Orthogonal Store Criteria)**: `w_price`, `w_distance`, `w_open_now`, `w_trust_freshness`, and `w_installment` evaluated via a 3-level observability rubric (`0`: Not Mentioned, `1`: Mild Preference, `2`: Primary Emphasis), Sparse Override ($\ge 80\%$ weight for a single mentioned criterion), Outlier-Resistant Relative Exponential Price Decay, and Contrastive Revealed-Preference Learning.
 
 ---
 

@@ -110,3 +110,20 @@ def test_end_to_end_shopping_journey_and_endpoints():
         fb_store = fb_store_res.json()
         assert fb_store["alternative_store"]["shop_id"] != t1["stores"][0]["shop_id"]
         assert fb_store["banner_fa"]
+
+        # 8. SC-001 & SC-005: Urgent chat turn gives >= 80% weight to mentioned criterion without mutating DB profile
+        urgent_user = f"usr_urgent_{uuid.uuid4().hex[:8]}"
+        urgent_sess = f"sess_urgent_{uuid.uuid4().hex[:8]}"
+        u_res = client.post(
+            "/api/v1/chat/turn",
+            json={
+                "session_id": urgent_sess,
+                "user_id": urgent_user,
+                "message": "ارزان‌ترین گوشی شیائومی با کمترین قیمت در تهران",
+                "user_location": {"lat": 35.7219, "lng": 51.3347},
+            },
+        )
+        assert u_res.status_code == 200
+        u_data = u_res.json()
+        price_slot = next(w for w in u_data["recsys_state"]["active_weights"] if w["key"] == "w_price")
+        assert price_slot["weight"] >= 0.80
