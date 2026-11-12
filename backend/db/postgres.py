@@ -90,6 +90,20 @@ CREATE TABLE IF NOT EXISTS user_dynamic_slots (
     PRIMARY KEY (user_id, slot_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_trait_memory (
+    trait_id BIGSERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES user_profiles(user_id) ON DELETE CASCADE,
+    domain TEXT NOT NULL,
+    aspect TEXT NOT NULL,
+    preference TEXT NOT NULL,
+    aspect_embedding vector({dim}),
+    hit_count INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_trait_memory_user_domain
+    ON user_trait_memory (user_id, domain);
+
 CREATE TABLE IF NOT EXISTS shopping_sessions (
     session_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

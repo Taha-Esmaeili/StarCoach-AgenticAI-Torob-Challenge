@@ -1,8 +1,14 @@
-"""15-Parameter Utility Scorer, Dealbreaker Hurdle Phi(i), Value-of-Travel Coupling, and Pareto Top-3 Selector.
+"""5-Criteria Orthogonal Store Utility Scorer, Dealbreaker Hurdle Phi(i), and Pareto Top-3 Selector.
 
-Evaluates:
-U(u, q, i) = Phi(i) * [ sum_{k=1..15} w_hat_k(u, q) * x_k(i, q)
-                        - lambda_travel * (TravelCost_Toman(u, i) / Price_Toman(q)) ]
+Evaluates (`specs/002-jev-domain-recsys/`):
+U(u, q, i) = Phi(i) * sum_{k=1..5} w_hat_k(u, q) * f_{i,k}
+
+Where:
+- `f_{i,1}` (`w_price`): Outlier-resistant relative exponential decay `exp(-(P_i - P_min) / (0.15 * P_min))`
+- `f_{i,2}` (`w_distance`): Exponential urban distance decay `exp(-d_i / 8.0)`
+- `f_{i,3}` (`w_open_now`): Open status (`1.0` open, `0.4` unknown hours, `0.0` closed)
+- `f_{i,4}` (`w_trust_freshness`): `0.65 * exp(-age_days / 14.0) + 0.20 * I(is_real_shop) + 0.15 * I(has_warranty)`
+- `f_{i,5}` (`w_installment`): Verified in-person installment availability (`1.0` or `0.0`)
 """
 
 import math
@@ -16,66 +22,60 @@ from backend.models.schemas import HardConstraintsState, MallMicroGuide, ScoredS
 def _compute_feature_vector(
     offer: dict[str, Any],
     min_price: int,
-    max_price: int,
-    dynamic_slots: list[dict[str, Any]],
+    max_price: int | None = None,
+    dynamic_slots: list[dict[str, Any]] | None = None,
 ) -> dict[str, float]:
-    """Compute normalized `[0.0, 1.0]` feature values `x_k(i, q)` for all 15 slots."""
-    dist_km = max(0.0, float(offer.get("distance_km", 5.0)))
-    x_distance = math.exp(-dist_km / 6.0)  # 1.0 at 0km, ~0.51 at 4km, ~0.18 at 10km
-
+    """Compute normalized `[0.0, 1.0]` feature values `f_{i,k}` for the 5 orthogonal store criteria."""
+    # 1. Price Advantage (Outlier-resistant relative exponential decay anchored at floor price P_min)
     price = int(offer.get("price_toman", 0))
-    if price <= 0:
-        x_price = 0.50
-    elif max_price > min_price:
-        x_price = 1.0 - ((price - min_price) / float(max_price - min_price))
+    tau_price = max(0.01, float(settings.recsys_price_decay_ratio))
+    if price <= 0 or min_price <= 0:
+        f_price = 0.50
     else:
-        x_price = 0.90
+        delta_ratio = max(0.0, float(price - min_price) / float(min_price))
+        f_price = math.exp(-delta_ratio / tau_price)
 
-    raw_score = float(offer.get("shop_score", 4.5))
-    votes = int(offer.get("votes_count", 15))
-    prior_v = settings.recsys_bayesian_prior_votes
-    bayesian_score = (votes * raw_score + prior_v * 4.2) / float(votes + prior_v)
-    x_score = max(0.0, min(1.0, (bayesian_score - 1.0) / 4.0))
+    # 2. Proximity / Distance in Tehran
+    dist_km = max(0.0, float(offer.get("distance_km", 5.0)))
+    tau_dist = max(0.5, float(settings.recsys_distance_decay_km))
+    f_distance = math.exp(-dist_km / tau_dist)
 
-    x_open_now = 1.0 if offer.get("is_open_now") else 0.15
+    # 3. Open-Now Status
+    if offer.get("is_open_now") is True:
+        f_open_now = 1.0
+    elif offer.get("today_hours_fa") in (None, "", "نامشخص"):
+        f_open_now = 0.40
+    else:
+        f_open_now = 0.0
 
+    # 4. Price Freshness & Shop Trust
     age_days = max(0.0, float(offer.get("freshness_age_days", 3.0)))
-    x_freshness = math.exp(-age_days / max(1.0, settings.recsys_freshness_half_life_days))
+    half_life = max(1.0, float(settings.recsys_freshness_half_life_days))
+    fresh_part = math.exp(-age_days / half_life)
+    real_part = 1.0 if offer.get("is_real_torob_shop") else 0.0
+    warr_part = 1.0 if offer.get("has_official_warranty") else 0.0
+    f_trust_freshness = 0.65 * fresh_part + 0.20 * real_part + 0.15 * warr_part
 
-    x_installment = 1.0 if offer.get("has_in_person_installment") else 0.0
-    x_warranty = 1.0 if offer.get("has_official_warranty") else 0.10
-    x_mall = 1.0 if (offer.get("mall_micro_guide") or {}).get("mall_name") else 0.25
-    x_verified = 1.0 if offer.get("is_real_torob_shop") else 0.30
-    x_delivery = 1.0 if offer.get("supports_fast_delivery") else 0.20
+    # 5. In-Person Installment / Credit
+    f_installment = 1.0 if offer.get("has_in_person_installment") else 0.0
 
-    features = {
-        "w_distance": x_distance,
-        "w_price": max(0.0, min(1.0, x_price)),
-        "w_score": x_score,
-        "w_open_now": x_open_now,
-        "w_freshness": x_freshness,
-        "w_installment": x_installment,
-        "w_warranty": x_warranty,
-        "w_mall_cluster": x_mall,
-        "w_verified_shop": x_verified,
-        "w_delivery_backup": x_delivery,
+    return {
+        "w_price": max(0.0, min(1.0, f_price)),
+        "w_distance": max(0.0, min(1.0, f_distance)),
+        "w_open_now": max(0.0, min(1.0, f_open_now)),
+        "w_trust_freshness": max(0.0, min(1.0, f_trust_freshness)),
+        "w_installment": max(0.0, min(1.0, f_installment)),
+        "f_price": max(0.0, min(1.0, f_price)),
+        "f_distance": max(0.0, min(1.0, f_distance)),
+        "f_open_now": max(0.0, min(1.0, f_open_now)),
+        "f_trust_freshness": max(0.0, min(1.0, f_trust_freshness)),
+        "f_installment": max(0.0, min(1.0, f_installment)),
+        # Legacy aliases mapped cleanly for backward-compatible callers
+        "w_freshness": fresh_part,
+        "w_score": f_trust_freshness,
+        "w_warranty": warr_part,
+        "w_verified_shop": real_part,
     }
-
-    # Dynamic Spec Slots (11..15)
-    specs_blob = " ".join(
-        [str(offer.get("product_name") or ""), json.dumps(offer.get("specs") or {}, ensure_ascii=False)]
-    ) if isinstance(offer.get("specs"), dict) else str(offer.get("product_name") or "")
-    for dyn in dynamic_slots:
-        f_key = str(dyn.get("feature_key") or "")
-        label = str(dyn.get("label_fa") or "")
-        tokens = [t for t in label.split() if len(t) >= 3]
-        matched = any(t in specs_blob for t in tokens) if tokens else True
-        features[f_key] = 0.92 if matched else 0.45
-
-    return features
-
-
-import json
 
 
 def compute_hurdle_multiplier(offer: dict[str, Any], hard_constraints: HardConstraintsState) -> float:
@@ -113,12 +113,11 @@ def build_why_this_shop_fa(
             reasons.append(f"پرداخت اقساطی حضوری ({provs})")
         elif k == "w_open_now" and offer.get("is_open_now"):
             reasons.append(f"هم‌اکنون باز ({offer.get('today_hours_fa', '')})")
-        elif k == "w_warranty" and offer.get("has_official_warranty"):
-            reasons.append(offer.get("warranty_provider") or "گارانتی معتبر شرکتی")
-        elif k == "w_verified_shop" and offer.get("is_real_torob_shop"):
-            reasons.append("فروشگاه رسمی تاییدشده ترب")
-        elif k == "w_mall_cluster" and (offer.get("mall_micro_guide") or {}).get("mall_name"):
-            reasons.append(f"مستقر در {offer['mall_micro_guide']['mall_name']}")
+        elif k in ("w_trust_freshness", "w_warranty", "w_verified_shop", "w_freshness"):
+            if offer.get("is_real_torob_shop"):
+                reasons.append("فروشگاه رسمی تاییدشده ترب")
+            elif offer.get("has_official_warranty"):
+                reasons.append(offer.get("warranty_provider") or "گارانتی معتبر شرکتی")
 
     if not reasons:
         reasons.append(f"{to_persian_digits(dist_km)} کیلومتر فاصله ({to_persian_digits(drive_m)} دقیقه)")
@@ -134,37 +133,29 @@ def score_and_rank_offers(
     dynamic_slots: list[dict[str, Any]] | None = None,
     limit: int | None = None,
 ) -> list[ScoredStoreOffer]:
-    """Score candidate store offers using the 15-parameter utility function and assign Pareto Top-3 roles."""
+    """Score candidate store offers using the 5-criteria utility function and assign Pareto Top-3 roles."""
     if not candidates:
         return []
 
-    dyn_list = dynamic_slots or []
     positive_prices = [int(c["price_toman"]) for c in candidates if int(c.get("price_toman", 0)) > 0]
     min_price = min(positive_prices) if positive_prices else 1_000_000
-    max_price = max(positive_prices) if positive_prices else 1_000_000
 
-    scored_items: list[tuple[float, dict[str, Any], list[str]]] = []
+    scored_items: list[tuple[float, dict[str, Any], list[str], dict[str, float]]] = []
     for cand in candidates:
-        feats = _compute_feature_vector(cand, min_price=min_price, max_price=max_price, dynamic_slots=dyn_list)
-        contributions = {k: l1_weights.get(k, 0.0) * val for k, val in feats.items()}
+        feats = _compute_feature_vector(cand, min_price=min_price)
+        contributions = {k: float(w) * feats.get(k, 0.0) for k, w in l1_weights.items() if k in feats}
         linear_utility = sum(contributions.values())
 
-        # Enhancement 2: Net Value-of-Travel Coupling
-        # Travelling 10km for a 200k Toman cable hurts utility much more than travelling 10km for a 50M Toman phone
-        ref_price = max(250_000, int(cand.get("price_toman") or min_price))
-        travel_cost_toman = float(cand.get("distance_km", 0.0)) * float(settings.recsys_travel_cost_per_km_toman)
-        travel_penalty = settings.recsys_travel_coupling_lambda * min(0.35, travel_cost_toman / float(ref_price))
-
         phi = compute_hurdle_multiplier(cand, hard_constraints)
-        final_u = max(0.05, min(0.99, phi * max(0.05, linear_utility - travel_penalty)))
+        final_u = max(0.05, min(0.99, phi * max(0.05, linear_utility)))
         reasons = build_why_this_shop_fa(cand, contributions)
-        scored_items.append((final_u, cand, reasons))
+        scored_items.append((final_u, cand, reasons, feats))
 
     scored_items.sort(key=lambda item: item[0], reverse=True)
     top_n = limit or settings.top_ranked_stores_limit
     selected = scored_items[:top_n]
 
-    # Enhancement 4: Pareto-Front Top-3 Diversity Assignment
+    # Pareto-Front Top-3 Diversity Assignment:
     # #1 Best Overall Utility, #2 Closest Open Store, #3 Lowest Price Store
     best_overall_id = selected[0][1]["offer_id"] if selected else None
 
@@ -187,7 +178,7 @@ def score_and_rank_offers(
     )
 
     results: list[ScoredStoreOffer] = []
-    for u_val, cand, reasons in selected:
+    for u_val, cand, reasons, feats in selected:
         oid = cand["offer_id"]
         if oid == best_overall_id:
             role = "best_overall"
@@ -242,6 +233,7 @@ def score_and_rank_offers(
                 instagram=cand.get("instagram"),
                 website_url=cand.get("website_url"),
                 is_category_fallback=bool(cand.get("is_category_fallback", False)),
+                feature_scores={k: round(float(v), 4) for k, v in feats.items() if k.startswith("f_")},
             )
         )
 

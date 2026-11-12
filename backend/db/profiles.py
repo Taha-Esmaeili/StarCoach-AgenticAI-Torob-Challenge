@@ -17,6 +17,7 @@ from backend.db.redis_cache import (
 # In-memory fallback store used when Redis/PostgreSQL are not passed in isolated unit tests
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
 _MEMORY_SESSIONS: dict[str, dict[str, Any]] = {}
+_MEMORY_TRAITS: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
 
 def build_default_profile(user_id: str) -> dict[str, Any]:
@@ -225,6 +226,218 @@ async def find_closest_dynamic_slot_pgvector(
     except Exception:
         pass
     return None, 0.0
+
+
+async def fetch_domain_traits_pgvector(
+    pg_pool: asyncpg.Pool | None,
+    user_id: str,
+    domain: str,
+    query_embedding: list[float] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Retrieve top-K specialized traits for `(user_id, domain)` in < 2ms via `pgvector` or memory store."""
+    top_k = limit or settings.recsys_max_traits_per_query
+    if pg_pool is not None:
+        try:
+            async with pg_pool.acquire() as conn:
+                if query_embedding and len(query_embedding) == settings.embedding_dim:
+                    emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in query_embedding) + "]"
+                    rows = await conn.fetch(
+                        """
+                        SELECT trait_id, domain, aspect, preference, hit_count,
+                               1.0 - (aspect_embedding <=> $3::vector) AS cos_sim
+                        FROM user_trait_memory
+                        WHERE user_id = $1 AND domain = $2
+                        ORDER BY aspect_embedding <=> $3::vector ASC, updated_at DESC
+                        LIMIT $4
+                        """,
+                        user_id,
+                        domain,
+                        emb_literal,
+                        top_k,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT trait_id, domain, aspect, preference, hit_count, 1.0 AS cos_sim
+                        FROM user_trait_memory
+                        WHERE user_id = $1 AND domain = $2
+                        ORDER BY hit_count DESC, updated_at DESC
+                        LIMIT $3
+                        """,
+                        user_id,
+                        domain,
+                        top_k,
+                    )
+                if rows:
+                    return [dict(r) for r in rows]
+        except Exception:
+            pass
+
+    mem_items = list(_MEMORY_TRAITS.get((user_id, domain), []))
+    if not mem_items:
+        return []
+    if query_embedding:
+        import numpy as np
+
+        q_vec = np.asarray(query_embedding, dtype=np.float64)
+        q_norm = float(np.linalg.norm(q_vec)) or 1.0
+
+        def _score_item(item: dict[str, Any]) -> float:
+            emb = item.get("aspect_embedding")
+            if not emb or len(emb) != len(query_embedding):
+                return 0.0
+            v = np.asarray(emb, dtype=np.float64)
+            denom = q_norm * (float(np.linalg.norm(v)) or 1.0)
+            return float(np.dot(q_vec, v) / denom)
+
+        mem_items.sort(key=_score_item, reverse=True)
+    return [
+        {
+            "trait_id": it.get("trait_id", idx + 1),
+            "domain": it["domain"],
+            "aspect": it["aspect"],
+            "preference": it["preference"],
+            "hit_count": int(it.get("hit_count", 1)),
+        }
+        for idx, it in enumerate(mem_items[:top_k])
+    ]
+
+
+async def find_closest_domain_aspects_pgvector(
+    pg_pool: asyncpg.Pool | None,
+    user_id: str,
+    domain: str,
+    aspect_embedding: list[float],
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Find closest existing `aspect` rows within `(user_id, domain)` for deduplication / polarity update."""
+    if pg_pool is not None and len(aspect_embedding) == settings.embedding_dim:
+        emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in aspect_embedding) + "]"
+        try:
+            async with pg_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT trait_id, domain, aspect, preference, hit_count,
+                           1.0 - (aspect_embedding <=> $3::vector) AS cos_sim
+                    FROM user_trait_memory
+                    WHERE user_id = $1 AND domain = $2 AND aspect_embedding IS NOT NULL
+                    ORDER BY aspect_embedding <=> $3::vector ASC
+                    LIMIT $4
+                    """,
+                    user_id,
+                    domain,
+                    emb_literal,
+                    limit,
+                )
+                if rows:
+                    return [dict(r) for r in rows]
+        except Exception:
+            pass
+
+    mem_items = list(_MEMORY_TRAITS.get((user_id, domain), []))
+    if not mem_items:
+        return []
+    import numpy as np
+
+    a_vec = np.asarray(aspect_embedding, dtype=np.float64)
+    a_norm = float(np.linalg.norm(a_vec)) or 1.0
+    scored: list[dict[str, Any]] = []
+    for idx, it in enumerate(mem_items):
+        emb = it.get("aspect_embedding") or []
+        cos = 0.0
+        if len(emb) == len(aspect_embedding):
+            v = np.asarray(emb, dtype=np.float64)
+            cos = float(np.dot(a_vec, v) / (a_norm * (float(np.linalg.norm(v)) or 1.0)))
+        scored.append({**it, "trait_id": it.get("trait_id", idx + 1), "cos_sim": cos})
+    scored.sort(key=lambda x: x["cos_sim"], reverse=True)
+    return scored[:limit]
+
+
+async def save_or_update_domain_trait(
+    pg_pool: asyncpg.Pool | None,
+    user_id: str,
+    domain: str,
+    aspect: str,
+    preference: str,
+    aspect_embedding: list[float],
+    matched_trait_id: int | None = None,
+) -> dict[str, Any]:
+    """Insert a new `(user_id, domain, aspect, preference)` trait or update `preference` in-place on `matched_trait_id`."""
+    mem_list = _MEMORY_TRAITS.setdefault((user_id, domain), [])
+    updated_record: dict[str, Any] | None = None
+
+    if matched_trait_id is not None:
+        for item in mem_list:
+            if int(item.get("trait_id", -1)) == int(matched_trait_id) or item.get("aspect") == aspect:
+                item["preference"] = preference
+                item["aspect_embedding"] = aspect_embedding
+                item["hit_count"] = int(item.get("hit_count", 1)) + 1
+                updated_record = item
+                break
+
+    if updated_record is None:
+        new_id = len(mem_list) + 1
+        updated_record = {
+            "trait_id": new_id,
+            "user_id": user_id,
+            "domain": domain,
+            "aspect": aspect,
+            "preference": preference,
+            "aspect_embedding": aspect_embedding,
+            "hit_count": 1,
+        }
+        mem_list.append(updated_record)
+
+    if pg_pool is not None and len(aspect_embedding) == settings.embedding_dim:
+        emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in aspect_embedding) + "]"
+        try:
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, base_weights_json, persona_weights_json, interaction_count)
+                    VALUES ($1, $2::jsonb, $3::jsonb, 0)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    user_id,
+                    json.dumps(settings.default_base_weights, ensure_ascii=False),
+                    json.dumps(settings.default_persona_weights, ensure_ascii=False),
+                )
+                if matched_trait_id is not None:
+                    await conn.execute(
+                        """
+                        UPDATE user_trait_memory
+                        SET preference = $1,
+                            aspect_embedding = $2::vector,
+                            hit_count = hit_count + 1,
+                            updated_at = NOW()
+                        WHERE trait_id = $3 AND user_id = $4 AND domain = $5
+                        """,
+                        preference,
+                        emb_literal,
+                        int(matched_trait_id),
+                        user_id,
+                        domain,
+                    )
+                else:
+                    row_id = await conn.fetchval(
+                        """
+                        INSERT INTO user_trait_memory (user_id, domain, aspect, preference, aspect_embedding, hit_count, updated_at)
+                        VALUES ($1, $2, $3, $4, $5::vector, 1, NOW())
+                        RETURNING trait_id
+                        """,
+                        user_id,
+                        domain,
+                        aspect,
+                        preference,
+                        emb_literal,
+                    )
+                    if row_id is not None:
+                        updated_record["trait_id"] = int(row_id)
+        except Exception:
+            pass
+
+    return updated_record
 
 
 async def load_shopping_session(

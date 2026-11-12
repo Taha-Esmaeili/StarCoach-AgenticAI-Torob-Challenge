@@ -133,6 +133,7 @@ class ScoredStoreOffer(BaseModel):
     instagram: str | None = None
     website_url: str | None = None
     is_category_fallback: bool = False
+    feature_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class RecommendedProductItem(BaseModel):

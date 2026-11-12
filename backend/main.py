@@ -6,14 +6,16 @@ from typing import Any
 
 import asyncpg
 import redis.asyncio as aioredis
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.db.normalizer import to_persian_digits
+from backend.db.postgres import ensure_schema
 from backend.db.profiles import (
+    fetch_domain_traits_pgvector,
     load_shopping_session,
     load_user_profile,
     save_shopping_session,
@@ -23,6 +25,7 @@ from backend.db.queries import (
     fetch_candidate_offers,
     fetch_fallback_store,
     fetch_product_comparison,
+    rerank_products_with_domain_traits,
     search_products,
 )
 from backend.models.schemas import (
@@ -45,12 +48,13 @@ from backend.recsys.clarifier import (
     map_clarification_answers_to_deltas,
     should_trigger_clarification,
 )
-from backend.recsys.deduplicator import upsert_dynamic_spec_slots
-from backend.recsys.jev_engine import ScoreJudgment, evaluate_turn_with_jev
+from backend.recsys.deduplicator import sync_user_domain_traits
+from backend.recsys.jev_engine import ScoreJudgment, embed_text_async, evaluate_turn_with_jev
 from backend.recsys.scorer import score_and_rank_offers
 from backend.recsys.weights import (
     fuse_and_normalize_weights,
     update_profile_ema_unconstrained,
+    update_store_weights_contrastive,
 )
 
 
@@ -67,6 +71,7 @@ async def lifespan(app: FastAPI):
             max_size=settings.postgres_pool_max_size,
             command_timeout=settings.postgres_command_timeout_seconds,
         )
+        await ensure_schema(app.state.pg_pool)
     except Exception:
         # shortcut: allow app startup before docker-compose / DB ingestion runs; health endpoint reports postgres_pgvector_ready=False
         app.state.pg_pool = None
@@ -147,8 +152,12 @@ async def _probe_redis(redis_client: Any) -> bool:
         return False
 
 
-def _build_recommended_product_cards(raw_products: list[dict[str, Any]]) -> list[RecommendedProductItem]:
+def _build_recommended_product_cards(
+    raw_products: list[dict[str, Any]],
+    domain_traits: list[dict[str, Any]] | None = None,
+) -> list[RecommendedProductItem]:
     cards: list[RecommendedProductItem] = []
+    traits = domain_traits or []
     for idx, p in enumerate(raw_products):
         min_p = int(p.get("min_price_toman") or 0)
         max_p = int(p.get("max_price_toman") or min_p)
@@ -160,10 +169,28 @@ def _build_recommended_product_cards(raw_products: list[dict[str, Any]]) -> list
         sc_fmt = to_persian_digits(sc)
         specs_dict: dict[str, str] = {str(k): str(v) for k, v in (p.get("specs") or {}).items()}
         spec_highlights = [f"{k}: {v}" for k, v in list(specs_dict.items())[:2]]
+        matched_traits = list(p.get("matched_traits") or [])
+        if not matched_traits and traits:
+            matched_traits = [str(traits[0].get("preference") or "")][:1]
+        trait_suffix = (
+            f" • هماهنگ با سلیقه تخصصی شما ({'، '.join(t for t in matched_traits if t)})"
+            if any(matched_traits)
+            else ""
+        )
         best_for = (
             f"موجود در {sc_fmt} فروشگاه حضوری تهران با کف قیمت {min_p_fmt} تومان"
             + (f" ({' • '.join(spec_highlights)})" if spec_highlights else "")
+            + trait_suffix
         )
+        pros_list = [
+            f"موجود در {sc_fmt} فروشگاه حضوری تهران",
+            f"شروع قیمت حضوری از {min_p_fmt} تومان",
+            *(
+                [f"منطبق با ترجیح شما: {matched_traits[0]}"]
+                if any(matched_traits)
+                else (spec_highlights[:1] if spec_highlights else ["تایید اصالت و امکان بررسی حضوری"])
+            ),
+        ]
         cards.append(
             RecommendedProductItem(
                 product_id=str(p["product_id"]),
@@ -179,11 +206,7 @@ def _build_recommended_product_cards(raw_products: list[dict[str, Any]]) -> list
                 match_score=match_score,
                 best_for_fa=best_for,
                 badge_fa=badge,
-                pros_fa=[
-                    f"موجود در {sc_fmt} فروشگاه حضوری تهران",
-                    f"شروع قیمت حضوری از {min_p_fmt} تومان",
-                    *(spec_highlights[:1] if spec_highlights else ["تایید اصالت و امکان بررسی حضوری"]),
-                ],
+                pros_fa=pros_list,
                 cons_fa=["نیازمند استعلام تلفنی موجودی رنگ پیش از حرکت"],
                 specs=specs_dict,
             )
@@ -279,8 +302,12 @@ async def get_health(request: Request) -> HealthResponse:
 
 
 @app.post(f"{settings.api_v1_prefix}/chat/turn", response_model=ChatTurnResponse)
-async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResponse:
-    """Execute a full conversational shopping turn powered by Jev System One + 15-Slot Adaptive RecSys."""
+async def post_chat_turn(
+    req: ChatTurnRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> ChatTurnResponse:
+    """Execute a full conversational shopping turn powered by Two-Stage Jev Domain RecSys."""
     pg_pool = getattr(request.app.state, "pg_pool", None)
     redis_client = getattr(request.app.state, "redis", None)
 
@@ -294,27 +321,35 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
         redis_client=redis_client,
     )
 
-    # 1. Parallel System One Evaluation (Choice, 10 Scores + Confidences, Dealbreaker Nouls, Dynamic Specs)
+    # 1. Parallel System One Evaluation (Domain Choice, Intent Choice, 5 Store Scores, Hurdles, Domain Traits)
     eval_res = await evaluate_turn_with_jev(req.message, session_context=session)
 
-    # 2. Hybrid Stage-1 pgvector + Stage-2 Jev Noul Feature Deduplication into Slots 11..15
-    if eval_res.candidate_dynamic_specs:
-        user_profile = await upsert_dynamic_spec_slots(
-            user_profile,
-            eval_res.candidate_dynamic_specs,
-            pg_pool=pg_pool,
+    # 2. Fast Online Read (< 2 ms) of Domain-Scoped Traits for `(user_id, eval_res.domain)`
+    query_vec = await embed_text_async(req.message)
+    domain_traits = await fetch_domain_traits_pgvector(
+        pg_pool,
+        user_id=req.user_id,
+        domain=eval_res.domain,
+        query_embedding=query_vec,
+        limit=settings.recsys_max_traits_per_query,
+    )
+
+    # 3. Zero-Latency Async Background Write for newly extracted durable domain traits (`SC-004`)
+    if eval_res.extracted_traits:
+        background_tasks.add_task(
+            sync_user_domain_traits,
+            req.user_id,
+            eval_res.domain,
+            eval_res.extracted_traits,
+            pg_pool,
         )
 
-    # 3. Confidence-Gated Fusion + Layer-2 L1 Simplex Normalization (`sum_k w_hat_k = 1.0`)
+    # 4. Sparse Override Fusion + L1 Simplex Normalization across 5 orthogonal store criteria (`SC-001`)
+    # Note (`SC-005`): Chat turns do NOT mutate `user_profile["base_weights"]` in the database;
+    # long-term store weights only update via explicit / revealed feedback in `/api/v1/feedback`.
     active_slots, l1_weights, eff_conf = fuse_and_normalize_weights(
         user_profile,
         eval_res.session_weights,
-    )
-
-    # 4. Update Layer-1 unconstrained user profile via confidence-weighted EMA
-    user_profile = update_profile_ema_unconstrained(
-        user_profile,
-        session_judgments=eval_res.session_weights,
     )
 
     # 5. Resolve Dealbreaker Hurdle Constraints (`Phi(i)`) from Jev Noul + explicit UI toggles
@@ -335,13 +370,14 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
         ),
     )
 
-    # 6. Anti-Fatigue Clarification Gate (Turn 1 low confidence < 0.45 OR dissatisfaction Noul >= 0.70)
+    # 6. Anti-Fatigue Clarification Gate (Turn 1 low confidence < 0.45 / needs_clarification Noul >= 0.70, or dissatisfaction Noul >= 0.70)
     clarify_count = int(session.get("clarification_count", 0))
     should_ask, next_clarify_count = should_trigger_clarification(
         effective_confidence=eff_conf,
         clarification_count=clarify_count,
         explicit_thumbs_down=False,
         dissatisfied_noul=eval_res.user_dissatisfied.noul,
+        needs_clarification_noul=eval_res.needs_clarification.noul,
     )
     dissatisfaction_triggered = bool(should_ask and clarify_count >= 1)
 
@@ -357,6 +393,11 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
             max_price_toman=max_price,
             limit=4,
             redis_client=redis_client,
+        )
+        raw_products = rerank_products_with_domain_traits(
+            raw_products,
+            domain_traits=domain_traits,
+            query=req.message,
         )
         target_pids = (
             [str(req.selected_product_id)]
@@ -374,7 +415,7 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
             redis_client=redis_client,
         )
 
-    product_cards = _build_recommended_product_cards(raw_products)
+    product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
     scored_stores = score_and_rank_offers(
         raw_offers,
         l1_weights=l1_weights,
@@ -403,8 +444,9 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
         dissatisfaction_triggered=dissatisfaction_triggered,
     )
 
-    # 8. Persist updated session & profile
+    # 8. Persist updated session (Note: `user_profile.base_weights` is untouched by emergency chat turns per SC-005)
     session["last_query"] = req.message
+    session["active_domain"] = eval_res.domain
     session["active_category_name"] = active_cat
     session["selected_product_id"] = str(req.selected_product_id) if req.selected_product_id else (product_cards[0].product_id if product_cards else None)
     session["effective_weights"] = l1_weights
@@ -416,7 +458,6 @@ async def post_chat_turn(req: ChatTurnRequest, request: Request) -> ChatTurnResp
     session_msgs.append({"role": "assistant", "text": assistant_text})
     session["messages"] = session_msgs[-20:]
 
-    await save_user_profile(user_profile, pg_pool=pg_pool, redis_client=redis_client)
     await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
 
     follow_up_chips = [
@@ -505,18 +546,31 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
         hard_raw["require_installment"] = True
     if deltas.get("w_open_now", 0.0) >= 0.90:
         hard_raw["require_open_now"] = True
-    if deltas.get("w_warranty", 0.0) >= 0.90:
+    if deltas.get("w_warranty", 0.0) >= 0.90 or deltas.get("w_trust_freshness", 0.0) >= 0.90:
         hard_raw["require_warranty"] = True
     hard_constraints = HardConstraintsState(**hard_raw)
 
     last_query = str(session.get("last_query") or session.get("active_category_name") or "گوشی موبایل")
+    active_domain = str(session.get("active_domain") or "general_retail")
     lat = float(session.get("user_lat") or settings.default_user_lat)
     lng = float(session.get("user_lng") or settings.default_user_lng)
+
+    domain_traits = await fetch_domain_traits_pgvector(
+        pg_pool,
+        user_id=req.user_id,
+        domain=active_domain,
+        limit=settings.recsys_max_traits_per_query,
+    )
 
     raw_products: list[dict[str, Any]] = []
     raw_offers: list[dict[str, Any]] = []
     if pg_pool is not None:
         raw_products = await search_products(pg_pool, query=last_query, limit=4, redis_client=redis_client)
+        raw_products = rerank_products_with_domain_traits(
+            raw_products,
+            domain_traits=domain_traits,
+            query=last_query,
+        )
         target_pids = [str(p["product_id"]) for p in raw_products[:3]]
         cat_name = str(raw_products[0]["category_name"]) if raw_products else session.get("active_category_name")
         raw_offers = await fetch_candidate_offers(
@@ -528,13 +582,25 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
             redis_client=redis_client,
         )
 
-    product_cards = _build_recommended_product_cards(raw_products)
+    product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
     scored_stores = score_and_rank_offers(
         raw_offers,
         l1_weights=l1_weights,
         hard_constraints=hard_constraints,
         dynamic_slots=user_profile.get("dynamic_slots"),
     )
+
+    # Contrastive Revealed-Preference update when user selects / thumbs-up a specific store offer (`T017`)
+    if req.feedback_type == "thumbs_up" and req.target_offer_id and scored_stores:
+        shown_feats = [dict(s.feature_scores) for s in scored_stores]
+        sel_store = next((s for s in scored_stores if str(s.offer_id) == str(req.target_offer_id)), scored_stores[0])
+        user_profile = update_store_weights_contrastive(
+            user_profile,
+            selected_features=dict(sel_store.feature_scores),
+            shown_features_list=shown_feats,
+        )
+        active_slots, l1_weights, eff_conf = fuse_and_normalize_weights(user_profile, session_judgments)
+
     comp_matrix = _build_inline_comparison_matrix(product_cards)
     active_cat = product_cards[0].category_name if product_cards else (session.get("active_category_name") or "کالای دیجیتال")
     clarification_card = (
@@ -551,7 +617,7 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
         )
     else:
         assistant_text = (
-            "✅ **اولویت‌های ۱۵گانه شما در موتور رتبه‌بندی ترب‌چیت اعمال شد** و فروشگاه‌های حضوری تهران بر اساس وزن‌های جدید بازآرایی شدند:\n\n"
+            "✅ **اولویت‌های شما در موتور رتبه‌بندی ترب‌چیت اعمال شد** و فروشگاه‌های حضوری تهران بر اساس وزن‌های جدید بازآرایی شدند:\n\n"
             + _compose_assistant_summary_fa(
                 query=last_query,
                 products=product_cards,
