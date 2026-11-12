@@ -20,7 +20,6 @@ from backend.recsys.jev_engine import (
     ExtractedDomainTrait,
     check_feature_equivalence_noul,
     check_same_aspect_noul,
-    deterministic_text_embedding,
     embed_text_async,
 )
 
@@ -116,10 +115,10 @@ async def upsert_dynamic_spec_slots(
     for s in slots:
         s["sessions_since_hit"] = int(s.get("sessions_since_hit", 0)) + 1
         if "embedding" not in s or not s["embedding"]:
-            s["embedding"] = deterministic_text_embedding(str(s.get("label_fa") or s.get("feature_key") or ""))
+            s["embedding"] = await embed_text_async(str(s.get("label_fa") or s.get("feature_key") or ""))
 
     for cand in candidates:
-        cand_emb = deterministic_text_embedding(f"{cand.label_fa} {cand.feature_key}")
+        cand_emb = await embed_text_async(f"{cand.label_fa} {cand.feature_key}")
         matched_idx: int | None = None
         best_cos = -1.0
 

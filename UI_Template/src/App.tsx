@@ -6,8 +6,6 @@ import {
   UserLocation,
 } from './types';
 import {
-  PRODUCTS,
-  SHOP_OFFERS,
   USER_LOCATIONS,
 } from './data/mockData';
 import {
@@ -33,9 +31,9 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'stores' | 'compare'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [userLocation] = useState<UserLocation>(USER_LOCATIONS[0]);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(PRODUCTS[0]);
-  const [liveProducts, setLiveProducts] = useState<Product[]>(PRODUCTS);
-  const [allShopOffers, setAllShopOffers] = useState<ShopOffer[]>(SHOP_OFFERS);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [liveProducts, setLiveProducts] = useState<Product[]>([]);
+  const [allShopOffers, setAllShopOffers] = useState<ShopOffer[]>([]);
   const [activeWeights, setActiveWeights] = useState<ActiveWeightSlotDto[]>([]);
 
   // Session & User IDs for PostgreSQL + Redis state persistence
@@ -139,22 +137,15 @@ export function App() {
       const aiMsg = applyBackendTurnResponse(data);
       setMessages((prev) => [...prev, aiMsg]);
       setIsLoading(false);
-    } catch {
-      // Offline fallback to mockData.ts if backend server is unreachable
-      const fallbackMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
+    } catch (err) {
+      const errDetail = err instanceof Error ? err.message : 'خطای ناشناخته در ارتباط با سرور';
+      const errorMsg: ChatMessage = {
+        id: `ai-err-${Date.now()}`,
         sender: 'assistant',
         timestamp: getPersianTimestamp(),
-        text: `بر اساس موقعیتت در **${userLocation.name}**، بهترین گزینه‌های خرید حضوری رو بررسی کردم:`,
-        recommendedProducts: PRODUCTS.slice(0, 2),
-        shopOffers: SHOP_OFFERS.slice(0, 3),
-        followUpChips: [
-          'نزدیک‌ترین مغازه باز در تهران',
-          'خرید قسطی حضوری با ترب‌پی',
-          'ارزان‌ترین فروشگاه این مدل',
-        ],
+        text: `❌ **خطا در ارتباط با مدل هوش مصنوعی یا سرور بک‌اند:**\n\n\`${errDetail}\`\n\nلطفاً مطمئن شوید سرور بک‌اند (\`port 8000\`) روشن است و کلید معتبر **OpenRouter (`LLM_API_KEY`)** در فایل \`.env\` قرار داده شده است.`,
       };
-      setMessages((prev) => [...prev, fallbackMsg]);
+      setMessages((prev) => [...prev, errorMsg]);
       setIsLoading(false);
     }
   };
@@ -191,16 +182,15 @@ export function App() {
       });
       const aiMsg = applyBackendTurnResponse(data);
       setMessages((prev) => [...prev, aiMsg]);
-    } catch {
-      const fallbackMsg: ChatMessage = {
-        id: `ai-final-${Date.now()}`,
+    } catch (err) {
+      const errDetail = err instanceof Error ? err.message : 'خطای ارتباط با سرور';
+      const errorMsg: ChatMessage = {
+        id: `ai-err-${Date.now()}`,
         sender: 'assistant',
         timestamp: getPersianTimestamp(),
-        text: `سپاس! بر اساس مشخصات ثبت‌شده و موقعیتت در **${userLocation.name}**، بهترین فروشگاه‌های حضوری بازآرایی شدند:`,
-        recommendedProducts: liveProducts.slice(0, 2),
-        shopOffers: allShopOffers.slice(0, 3),
+        text: `❌ **خطا در ثبت بازخورد روی سرور:** \`${errDetail}\``,
       };
-      setMessages((prev) => [...prev, fallbackMsg]);
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
     }
