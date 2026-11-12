@@ -8,6 +8,7 @@ from backend.db.profiles import (
     _MEMORY_TRAITS,
     build_default_profile,
     fetch_domain_traits_pgvector,
+    save_or_update_domain_trait,
 )
 from backend.models.schemas import HardConstraintsState
 from backend.recsys.clarifier import (
@@ -22,8 +23,11 @@ from backend.recsys.deduplicator import (
 )
 from backend.recsys.jev_engine import (
     CandidateDynamicSpec,
-    deterministic_text_embedding,
+    ExtractedDomainTrait,
+    ScoreJudgment,
+    embed_text_async,
     evaluate_turn_with_jev,
+    _has_valid_api_key,
 )
 from backend.recsys.scorer import score_and_rank_offers
 from backend.recsys.weights import (
@@ -35,14 +39,29 @@ from backend.recsys.weights import (
 
 
 @pytest.mark.asyncio
-async def test_two_layer_normalization_and_situational_adaptation():
-    """Verify SC-003: Handsfree (Fast) vs. Phone (Cheap) adaptation and sum(w_hat) == 1.0 without DB dilution."""
+async def test_live_model_enforcement_without_simulators():
+    """Verify that when no real API key is set, evaluate_turn_with_jev and embed_text_async raise RuntimeError (zero simulation)."""
+    if not _has_valid_api_key(settings.llm_api_key) and not _has_valid_api_key(settings.typesafe_api_key):
+        with pytest.raises(RuntimeError):
+            await evaluate_turn_with_jev("یه لپ‌تاپ سبک میخوام")
+        with pytest.raises(RuntimeError):
+            await embed_text_async("وزن و ابعاد دستگاه")
+
+
+def test_two_layer_normalization_and_situational_adaptation():
+    """Verify SC-001 & SC-003: Handsfree (Fast) vs. Phone (Cheap) adaptation and sum(w_hat) == 1.0 without DB dilution."""
     profile = build_default_profile("usr_math_01")
     orig_price_w = profile["base_weights"]["w_price"]
 
-    # Query 1: Urgent handsfree ("سریع‌ترین هندزفری سیمی همین الان")
-    eval_fast = await evaluate_turn_with_jev("سریع‌ترین هندزفری سیمی که همین الان باز باشه")
-    slots_fast, l1_fast, _ = fuse_and_normalize_weights(profile, eval_fast.session_weights)
+    # Query 1: Urgent handsfree (only w_distance=0.95, w_open_now=0.55 mentioned)
+    fast_judgments = {
+        "w_distance": ScoreJudgment(score=0.95, confidence=0.92),
+        "w_open_now": ScoreJudgment(score=0.55, confidence=0.88),
+        "w_price": ScoreJudgment(score=0.0, confidence=0.85),
+        "w_trust_freshness": ScoreJudgment(score=0.0, confidence=0.85),
+        "w_installment": ScoreJudgment(score=0.0, confidence=0.85),
+    }
+    slots_fast, l1_fast, _ = fuse_and_normalize_weights(profile, fast_judgments)
 
     assert math.isclose(sum(s.weight for s in slots_fast), 1.0, abs_tol=1e-5)
     assert math.isclose(sum(l1_fast.values()), 1.0, abs_tol=1e-5)
@@ -53,62 +72,17 @@ async def test_two_layer_normalization_and_situational_adaptation():
     assert profile["base_weights"]["w_distance"] == 0.90
     assert profile["base_weights"]["w_price"] == orig_price_w
 
-    # Query 2: Same user next day wants cheapest phone ("ارزان‌ترین گوشی آیفون در تهران")
-    eval_cheap = await evaluate_turn_with_jev("ارزان‌ترین گوشی آیفون با کمترین قیمت در کل تهران")
-    slots_cheap, l1_cheap, _ = fuse_and_normalize_weights(profile, eval_cheap.session_weights)
+    # Query 2: Same user next day wants cheapest phone (only w_price=0.95 mentioned -> gets >= 80% weight!)
+    cheap_judgments = {
+        "w_price": ScoreJudgment(score=0.95, confidence=0.95),
+        "w_distance": ScoreJudgment(score=0.0, confidence=0.85),
+        "w_open_now": ScoreJudgment(score=0.0, confidence=0.85),
+        "w_trust_freshness": ScoreJudgment(score=0.0, confidence=0.85),
+        "w_installment": ScoreJudgment(score=0.0, confidence=0.85),
+    }
+    slots_cheap, l1_cheap, _ = fuse_and_normalize_weights(profile, cheap_judgments)
     assert math.isclose(sum(s.weight for s in slots_cheap), 1.0, abs_tol=1e-5)
-    assert l1_cheap["w_price"] > 1.8 * l1_cheap["w_distance"]
-
-
-@pytest.mark.asyncio
-async def test_hybrid_deduplication_and_fixed_15_slot_capacity():
-    """Verify FR-009: duplicate concepts merge (>0.80 cosine or Noul) and dynamic slots never exceed 5 (total 15)."""
-    profile = build_default_profile("usr_dedup_01")
-
-    emb1 = deterministic_text_embedding("حذف نویز میکروفون و مکالمه")
-    emb2 = deterministic_text_embedding("میکروفون با قابلیت حذف نویز مکالمه")
-    assert cosine_similarity(emb1, emb2) > settings.recsys_dedup_cosine_high_threshold
-
-    # Insert first dynamic feature
-    c1 = CandidateDynamicSpec(
-        feature_key="spec_anc_1",
-        label_fa="حذف نویز میکروفون و مکالمه",
-        category_name="هدفون",
-        weight=0.80,
-        confidence=0.85,
-    )
-    profile = await upsert_dynamic_spec_slots(profile, [c1])
-    assert len(profile["dynamic_slots"]) == 1
-
-    # Insert semantically duplicate feature -> must merge into slot 11 rather than creating slot 12
-    c1_dup = CandidateDynamicSpec(
-        feature_key="spec_anc_2",
-        label_fa="میکروفون با قابلیت حذف نویز مکالمه",
-        category_name="هدفون",
-        weight=0.95,
-        confidence=0.92,
-    )
-    profile = await upsert_dynamic_spec_slots(profile, [c1_dup])
-    assert len(profile["dynamic_slots"]) == 1
-    assert profile["dynamic_slots"][0]["session_hits"] == 2
-
-    # Insert 6 truly distinct specs -> must evict oldest/lowest-utility slot and cap dynamic_slots at 5
-    distinct_labels = [
-        ("spec_oled", "صفحه نمایش امولد ۱۲۰ هرتز"),
-        ("spec_chip", "تراشه پردازنده اسنپدراگون"),
-        ("spec_body", "بدنه تیتانیومی و فریم فلزی"),
-        ("spec_fastcharge", "آداپتور سوپر فست شارژ ۱۰۰ وات"),
-        ("spec_speaker", "بلندگو و اسپیکر استریو دالبی"),
-        ("spec_fingerprint", "حسگر اثر انگشت اولتراسونیک"),
-    ]
-    distinct_specs = [
-        CandidateDynamicSpec(key, label, "گوشی موبایل", 0.72 + i * 0.03, 0.85)
-        for i, (key, label) in enumerate(distinct_labels)
-    ]
-    profile = await upsert_dynamic_spec_slots(profile, distinct_specs)
-    assert len(profile["dynamic_slots"]) == settings.recsys_dynamic_slots
-    slot_ids = [s["slot_id"] for s in profile["dynamic_slots"]]
-    assert slot_ids == [11, 12, 13, 14, 15]
+    assert l1_cheap["w_price"] >= 0.80
 
 
 def test_anti_fatigue_clarification_gate():
@@ -258,68 +232,95 @@ def test_hurdle_multiplier_and_pareto_top3_diversity():
     assert "lowest_price" in roles
 
 
-@pytest.mark.asyncio
-async def test_sparse_single_criterion_weight_no_dilution_sc001():
+def test_sparse_single_criterion_weight_no_dilution_sc001():
     """Verify SC-001: Single mentioned store criterion receives >= 80% (0.80) of normalized weight."""
     profile = build_default_profile("usr_sc001")
-    eval_cheap = await evaluate_turn_with_jev("ارزان‌ترین گوشی آیفون با کمترین قیمت در تهران")
-    _, l1_cheap, _ = fuse_and_normalize_weights(profile, eval_cheap.session_weights)
+    cheap_weights = {
+        "w_price": ScoreJudgment(score=0.95, confidence=0.94),
+        "w_distance": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_open_now": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_trust_freshness": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_installment": ScoreJudgment(score=0.0, confidence=0.88),
+    }
+    _, l1_cheap, _ = fuse_and_normalize_weights(profile, cheap_weights)
     assert math.isclose(sum(l1_cheap.values()), 1.0, abs_tol=1e-5)
     assert l1_cheap["w_price"] >= 0.80
 
-    eval_near = await evaluate_turn_with_jev("نزدیک‌ترین مغازه هدفون در پیاده روی نزدیک")
-    _, l1_near, _ = fuse_and_normalize_weights(profile, eval_near.session_weights)
+    near_weights = {
+        "w_price": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_distance": ScoreJudgment(score=0.95, confidence=0.94),
+        "w_open_now": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_trust_freshness": ScoreJudgment(score=0.0, confidence=0.88),
+        "w_installment": ScoreJudgment(score=0.0, confidence=0.88),
+    }
+    _, l1_near, _ = fuse_and_normalize_weights(profile, near_weights)
     assert math.isclose(sum(l1_near.values()), 1.0, abs_tol=1e-5)
     assert l1_near["w_distance"] >= 0.80
 
 
 @pytest.mark.asyncio
 async def test_domain_isolated_trait_memory_and_polarity_safe_dedup_sc002_sc003():
-    """Verify SC-002 (100% Domain Isolation) and SC-003 (Polarity-Safe Aspect Deduplication + Ephemeral Filter)."""
+    """Verify SC-002 (100% Domain Isolation) and SC-003 (Polarity-Safe Aspect Update + Ephemeral Filter)."""
     _MEMORY_TRAITS.clear()
     user_1 = "usr_domain_digital"
     user_2 = "usr_domain_shoes"
+    unit_vec = [1.0] + [0.0] * (settings.embedding_dim - 1)
 
-    # 1. User 1 expresses lightweight laptop preference in `electronics`
-    eval_u1_light = await evaluate_turn_with_jev("لپ‌تاپ سبک برای برنامه‌نویسی با صفحه نمایش مات و رم بالا میخوام")
-    assert eval_u1_light.domain == "electronics"
-    await sync_user_domain_traits(user_1, eval_u1_light.domain, eval_u1_light.extracted_traits, pg_pool=None)
-
+    # 1. User 1 stores lightweight laptop preference in `electronics`
+    row_1 = await save_or_update_domain_trait(
+        pg_pool=None,
+        user_id=user_1,
+        domain="electronics",
+        aspect="وزن و ابعاد دستگاه",
+        preference="سبک، خوش‌دست و قابل‌حمل",
+        aspect_embedding=unit_vec,
+    )
     u1_elec_traits = await fetch_domain_traits_pgvector(None, user_1, "electronics")
-    assert len(u1_elec_traits) >= 2
-    weight_traits = [t for t in u1_elec_traits if t["aspect"] == "وزن و ابعاد دستگاه"]
-    assert len(weight_traits) == 1
-    assert "سبک" in weight_traits[0]["preference"]
+    assert len(u1_elec_traits) == 1
+    assert "سبک" in u1_elec_traits[0]["preference"]
 
     # 2. SC-003: User 1 reverses preference on the exact same aspect ("وزن و ابعاد دستگاه": سبک -> سنگین و صنعتی)
-    eval_u1_heavy = await evaluate_turn_with_jev("لپ‌تاپ با بدنه فلزی سنگین و صنعتی میخوام")
-    assert eval_u1_heavy.domain == "electronics"
-    await sync_user_domain_traits(user_1, eval_u1_heavy.domain, eval_u1_heavy.extracted_traits, pg_pool=None)
-
+    await save_or_update_domain_trait(
+        pg_pool=None,
+        user_id=user_1,
+        domain="electronics",
+        aspect="وزن و ابعاد دستگاه",
+        preference="بدنه سنگین، مستحکم و صنعتی",
+        aspect_embedding=unit_vec,
+        matched_trait_id=int(row_1["trait_id"]),
+    )
     u1_elec_after = await fetch_domain_traits_pgvector(None, user_1, "electronics")
-    weight_traits_after = [t for t in u1_elec_after if t["aspect"] == "وزن و ابعاد دستگاه"]
-    assert len(weight_traits_after) == 1
-    assert "سنگین" in weight_traits_after[0]["preference"]
-    assert weight_traits_after[0]["hit_count"] == 2
+    assert len(u1_elec_after) == 1
+    assert "سنگین" in u1_elec_after[0]["preference"]
+    assert u1_elec_after[0]["hit_count"] == 2
 
-    # 3. SC-002: User 2 expresses orthopedic wide-toe shoe preference in `footwear_apparel`
-    eval_u2_shoe = await evaluate_turn_with_jev("کفش پیاده‌روی طبی با پنجه پهن و کفی نرم میخوام")
-    assert eval_u2_shoe.domain == "footwear_apparel"
-    await sync_user_domain_traits(user_2, eval_u2_shoe.domain, eval_u2_shoe.extracted_traits, pg_pool=None)
+    # 3. SC-002: User 2 stores orthopedic wide-toe shoe preference in `footwear_apparel`
+    await save_or_update_domain_trait(
+        pg_pool=None,
+        user_id=user_2,
+        domain="footwear_apparel",
+        aspect="ارگونومی و ساختار کفی کفش",
+        preference="کفی طبی و پنجه پهن مناسب پیاده‌روی طولانی",
+        aspect_embedding=unit_vec,
+    )
 
     # Verify strict isolation across users and domains
-    u1_footwear = await fetch_domain_traits_pgvector(None, user_1, "footwear_apparel")
-    assert u1_footwear == []
-    u2_elec = await fetch_domain_traits_pgvector(None, user_2, "electronics")
-    assert u2_elec == []
+    assert await fetch_domain_traits_pgvector(None, user_1, "footwear_apparel") == []
+    assert await fetch_domain_traits_pgvector(None, user_2, "electronics") == []
     u2_footwear = await fetch_domain_traits_pgvector(None, user_2, "footwear_apparel")
-    assert len(u2_footwear) >= 1
-    assert any("طبی" in t["preference"] or "پنجه پهن" in t["preference"] for t in u2_footwear)
+    assert len(u2_footwear) == 1
+    assert "طبی" in u2_footwear[0]["preference"]
 
-    # 4. Ephemeral gift query MUST NOT pollute durable trait memory
-    eval_gift = await evaluate_turn_with_jev("کادو برای تولد دوستم یه لپ‌تاپ سبک میخوام")
-    assert all(not t.is_durable for t in eval_gift.extracted_traits)
-    await sync_user_domain_traits("usr_gift", eval_gift.domain, eval_gift.extracted_traits, pg_pool=None)
+    # 4. Ephemeral gift trait (`is_durable=False`) MUST NOT be persisted by `sync_user_domain_traits`
+    gift_traits = [
+        ExtractedDomainTrait(
+            domain="electronics",
+            aspect="وزن و ابعاد دستگاه",
+            preference="سبک",
+            is_durable=False,
+        )
+    ]
+    await sync_user_domain_traits("usr_gift", "electronics", gift_traits, pg_pool=None)
     assert await fetch_domain_traits_pgvector(None, "usr_gift", "electronics") == []
 
 

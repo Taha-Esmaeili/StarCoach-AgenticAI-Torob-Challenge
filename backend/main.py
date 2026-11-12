@@ -322,10 +322,13 @@ async def post_chat_turn(
     )
 
     # 1. Parallel System One Evaluation (Domain Choice, Intent Choice, 5 Store Scores, Hurdles, Domain Traits)
-    eval_res = await evaluate_turn_with_jev(req.message, session_context=session)
+    try:
+        eval_res = await evaluate_turn_with_jev(req.message, session_context=session)
+        query_vec = await embed_text_async(req.message)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # 2. Fast Online Read (< 2 ms) of Domain-Scoped Traits for `(user_id, eval_res.domain)`
-    query_vec = await embed_text_async(req.message)
     domain_traits = await fetch_domain_traits_pgvector(
         pg_pool,
         user_id=req.user_id,
