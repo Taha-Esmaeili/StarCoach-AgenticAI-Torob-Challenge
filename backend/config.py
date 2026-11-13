@@ -18,21 +18,21 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # 1. TypeSafe AI System One (Jev) & OpenAI-Compatible LLM / Embeddings
+    # 1. Three Distinct Models: Decision Model (gemini-decision-1), LLM, and Embedding
     typesafe_api_key: str = ""
-    typesafe_base_url: str = "https://api.typesafe.ai/v1"
-    typesafe_model: str = "jev-latest"
+    typesafe_base_url: str = "https://generativelanguage.googleapis.com/v1beta/decisions"
+    typesafe_model: str = "gemini-decision-1"
     typesafe_timeout_seconds: float = 10.0
 
-    llm_base_url: str = "https://api.openai.com/v1"
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gemini-flash-lite-latest"
     llm_temperature: float = 0.1
     llm_timeout_seconds: float = 20.0
 
     embedding_base_url: str = ""
     embedding_api_key: str = ""
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "gemini-embedding-2"
     embedding_dim: int = 1536
     embedding_batch_size: int = 128
 

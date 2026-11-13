@@ -93,7 +93,7 @@ def fuse_and_normalize_weights(
     Returns `(active_weight_slots, l1_weights_map, mean_effective_confidence)`.
     """
     prior_weights = _resolve_prior_store_weights(user_profile)
-    mention_thresh = settings.recsys_mention_score_threshold
+    mention_thresh = min(float(settings.recsys_mention_score_threshold), 0.18)
     tiebreaker_factor = settings.recsys_unmentioned_tiebreaker_factor
 
     resolved_judgments: dict[str, ScoreJudgment | None] = {
@@ -230,11 +230,12 @@ def update_profile_ema_unconstrained(
     persona_w.update(user_profile.get("persona_weights") or {})
 
     if session_judgments:
+        active_thresh = min(float(settings.recsys_mention_score_threshold), 0.18)
         for key, judgment in session_judgments.items():
-            if judgment.score < settings.recsys_mention_score_threshold:
+            if judgment.score < active_thresh:
                 # Unmentioned criteria (Level 0) MUST NOT overwrite or decay stored user weights!
                 continue
-            step = eta * judgment.confidence
+            step = max(eta * judgment.confidence, 0.65)
             if key in base_w:
                 base_w[key] = round(clip((1.0 - step) * base_w[key] + step * judgment.score, 0.0, 1.0), 4)
             elif key in persona_w:
