@@ -282,7 +282,16 @@ export async function postChatTurn(payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Chat turn failed: ${res.status}`);
+  if (!res.ok) {
+    let detail = `Chat turn failed: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.detail) detail = errBody.detail;
+    } catch {
+      // ignore non-json error body
+    }
+    throw new Error(detail);
+  }
   return res.json();
 }
 

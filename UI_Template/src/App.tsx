@@ -70,8 +70,16 @@ export function App() {
   };
 
   const applyBackendTurnResponse = (data: ChatTurnResponseDto): ChatMessage => {
-    const mappedProducts = (data.recommended_products || []).map(mapDtoToProduct);
-    const mappedStores = (data.stores || []).map(mapDtoToShopOffer);
+    const clarificationPayload = mapDtoToClarification(data.clarification_card);
+    const isAskingClarification =
+      Boolean(clarificationPayload) || data.widget_type === 'clarification';
+
+    const mappedProducts = isAskingClarification
+      ? []
+      : (data.recommended_products || []).map(mapDtoToProduct);
+    const mappedStores = isAskingClarification
+      ? []
+      : (data.stores || []).map(mapDtoToShopOffer);
 
     if (mappedProducts.length > 0) {
       setLiveProducts(mappedProducts);
@@ -84,23 +92,26 @@ export function App() {
       setActiveWeights(data.recsys_state.active_weights);
     }
 
-    const clarificationPayload = mapDtoToClarification(data.clarification_card);
-
     return {
       id: `ai-${Date.now()}`,
       sender: 'assistant',
       timestamp: getPersianTimestamp(),
       text: data.assistant_text,
       featureClarification: clarificationPayload,
-      recommendedProducts: mappedProducts.length > 0 ? mappedProducts : undefined,
-      shopOffers: mappedStores.length > 0 ? mappedStores : undefined,
-      comparisonTable: data.comparison_matrix || undefined,
-      followUpChips:
-        data.follow_up_chips || [
-          'نزدیک‌ترین مغازه باز در تهران',
-          'خرید قسطی حضوری با ترب‌پی',
-          'ارزان‌ترین فروشگاه این مدل',
-        ],
+      recommendedProducts:
+        !isAskingClarification && mappedProducts.length > 0 ? mappedProducts : undefined,
+      shopOffers:
+        !isAskingClarification && mappedStores.length > 0 ? mappedStores : undefined,
+      comparisonTable: !isAskingClarification
+        ? data.comparison_matrix || undefined
+        : undefined,
+      followUpChips: isAskingClarification
+        ? undefined
+        : data.follow_up_chips || [
+            'نزدیک‌ترین مغازه باز در تهران',
+            'خرید قسطی حضوری با ترب‌پی',
+            'ارزان‌ترین فروشگاه این مدل',
+          ],
     };
   };
 
@@ -138,12 +149,12 @@ export function App() {
       setMessages((prev) => [...prev, aiMsg]);
       setIsLoading(false);
     } catch (err) {
-      const errDetail = err instanceof Error ? err.message : 'خطای ناشناخته در ارتباط با سرور';
+      console.error('Chat turn API error:', err);
       const errorMsg: ChatMessage = {
         id: `ai-err-${Date.now()}`,
         sender: 'assistant',
         timestamp: getPersianTimestamp(),
-        text: `❌ **خطا در ارتباط با مدل هوش مصنوعی یا سرور بک‌اند:**\n\n\`${errDetail}\`\n\nلطفاً مطمئن شوید سرور بک‌اند (\`port 8000\`) روشن است و کلید معتبر **OpenRouter (`LLM_API_KEY`)** در فایل \`.env\` قرار داده شده است.`,
+        text: 'متأسفانه در حال حاضر مشکلی در پردازش درخواست شما پیش آمده است. لطفاً دقایقی دیگر دوباره تلاش کنید و در صورت ادامهٔ مشکل، با پشتیبانی ترب در ارتباط باشید.',
       };
       setMessages((prev) => [...prev, errorMsg]);
       setIsLoading(false);
@@ -183,12 +194,12 @@ export function App() {
       const aiMsg = applyBackendTurnResponse(data);
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
-      const errDetail = err instanceof Error ? err.message : 'خطای ارتباط با سرور';
+      console.error('Feedback API error:', err);
       const errorMsg: ChatMessage = {
         id: `ai-err-${Date.now()}`,
         sender: 'assistant',
         timestamp: getPersianTimestamp(),
-        text: `❌ **خطا در ثبت بازخورد روی سرور:** \`${errDetail}\``,
+        text: 'متأسفانه در ثبت پاسخ شما مشکلی پیش آمده است. لطفاً دوباره تلاش کنید یا در صورت تداوم مشکل با پشتیبانی ترب تماس بگیرید.',
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
@@ -335,24 +346,28 @@ export function App() {
       )}
 
       {/* Full Step-by-Step In-Person Shopping Companion Modal */}
-      {activeTripOffer && !isTripMinimized && (
-        <ShoppingCompanionModal
-          isOpen={true}
-          onClose={() => {
-            setActiveTripOffer(null);
-            setIsTripMinimized(false);
-          }}
-          onMinimize={() => setIsTripMinimized(true)}
-          offer={activeTripOffer}
-          product={
-            liveProducts.find((p) => p.id === activeTripOffer.productId) ||
-            PRODUCTS.find((p) => p.id === activeTripOffer.productId) ||
-            selectedProduct ||
-            PRODUCTS[0]
-          }
-          onSwitchOffer={(newOffer) => setActiveTripOffer(newOffer)}
-        />
-      )}
+      {activeTripOffer &&
+        !isTripMinimized &&
+        (liveProducts.find((p) => p.id === activeTripOffer.productId) ||
+          selectedProduct ||
+          liveProducts[0]) && (
+          <ShoppingCompanionModal
+            isOpen={true}
+            onClose={() => {
+              setActiveTripOffer(null);
+              setIsTripMinimized(false);
+            }}
+            onMinimize={() => setIsTripMinimized(true)}
+            offer={activeTripOffer}
+            userLocation={userLocation}
+            product={
+              (liveProducts.find((p) => p.id === activeTripOffer.productId) ||
+                selectedProduct ||
+                liveProducts[0])!
+            }
+            onSwitchOffer={(newOffer) => setActiveTripOffer(newOffer)}
+          />
+        )}
 
       {/* Floating Minimized Bar for Active Shopping Trip */}
       {activeTripOffer && isTripMinimized && (

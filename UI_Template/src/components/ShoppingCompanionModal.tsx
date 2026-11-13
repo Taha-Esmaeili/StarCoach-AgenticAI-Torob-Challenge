@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShopOffer, Product } from '../types';
+import { ShopOffer, Product, UserLocation } from '../types';
 import { fetchFallbackStore, mapDtoToShopOffer } from '../api/client';
+import { InteractiveMap } from './InteractiveMap';
 import {
   MapPin,
   X,
@@ -26,6 +27,7 @@ interface ShoppingCompanionModalProps {
   onMinimize: () => void;
   offer: ShopOffer;
   product: Product;
+  userLocation?: UserLocation;
   onSwitchOffer?: (newOffer: ShopOffer) => void;
 }
 
@@ -35,8 +37,16 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
   onMinimize,
   offer,
   product,
+  userLocation,
   onSwitchOffer,
 }) => {
+  const resolvedUserLocation: UserLocation = userLocation || {
+    id: 'tehran_origin',
+    name: 'میدان ونک، تهران',
+    area: 'منطقه ۳ تهران',
+    lat: 35.7575,
+    lng: 51.41,
+  };
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -265,10 +275,20 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                   </div>
                 )}
 
+                {/* Embedded Live Map on the Site BEFORE opening Neshan / Balad / Google Maps */}
+                <div className="pt-1">
+                  <InteractiveMap
+                    offers={[offer]}
+                    userLocation={resolvedUserLocation}
+                    selectedOfferId={offer.id}
+                    compact={true}
+                  />
+                </div>
+
                 {/* Direct Navigation Apps */}
                 <div className="pt-2">
                   <span className="text-[11px] text-neutral-400 block mb-2 font-bold">
-                    مسیریابی با نرم‌افزار گوشی:
+                    باز کردن مسیر در مسیریاب دلخواه (در صورت نیاز):
                   </span>
                   <div className="grid grid-cols-3 gap-2">
                     <button

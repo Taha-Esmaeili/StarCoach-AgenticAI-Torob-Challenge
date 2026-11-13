@@ -12,8 +12,6 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-
 // Initialize Google GenAI if key is present
 const apiKey = process.env.GEMINI_API_KEY;
 let ai: GoogleGenAI | null = null;
@@ -45,7 +43,7 @@ const SYSTEM_INSTRUCTION = `
 `;
 
 // API: Chat with Torob assistant
-app.post('/api/chat', async (req: Request, res: Response) => {
+app.post('/api/chat', express.json(), async (req: Request, res: Response) => {
   try {
     const { prompt, history, userLocation, selectedProduct } = req.body;
 
@@ -100,7 +98,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
 });
 
 // API: Simulated Live Voice Inquiry (Google Call Agent)
-app.post('/api/inquire', (req: Request, res: Response) => {
+app.post('/api/inquire', express.json(), (req: Request, res: Response) => {
   const { shopId, productId } = req.body;
   res.json({
     success: true,
