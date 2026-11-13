@@ -22,6 +22,7 @@ from backend.db.profiles import (
     save_user_profile,
 )
 from backend.db.queries import (
+    fetch_candidate_categories,
     fetch_candidate_offers,
     fetch_fallback_store,
     fetch_product_comparison,
@@ -45,11 +46,15 @@ from backend.models.schemas import (
 )
 from backend.recsys.clarifier import (
     build_clarification_card,
-    map_clarification_answers_to_deltas,
     should_trigger_clarification,
 )
 from backend.recsys.deduplicator import sync_user_domain_traits
-from backend.recsys.jev_engine import ScoreJudgment, embed_text_async, evaluate_turn_with_jev
+from backend.recsys.jev_engine import (
+    ScoreJudgment,
+    embed_text_async,
+    evaluate_turn_with_jev,
+    score_candidate_products_with_decision_model,
+)
 from backend.recsys.scorer import score_and_rank_offers
 from backend.recsys.weights import (
     fuse_and_normalize_weights,
@@ -162,8 +167,12 @@ def _build_recommended_product_cards(
         min_p = int(p.get("min_price_toman") or 0)
         max_p = int(p.get("max_price_toman") or min_p)
         sc = int(p.get("store_count") or 1)
-        sim = float(p.get("trgm_sim") or 0.75)
-        match_score = max(78, min(98, int(round(82 + sim * 16 - idx * 2))))
+        dec_score = p.get("decision_score")
+        if dec_score is not None:
+            match_score = max(72, min(98, int(round(66 + float(dec_score) * 32))))
+        else:
+            sim = float(p.get("trgm_sim") or 0.75)
+            match_score = max(78, min(98, int(round(82 + sim * 16 - idx * 2))))
         badge = "پیشنهاد اول ترب‌چیت" if idx == 0 else ("ارزش خرید بالا" if idx == 1 else f"{to_persian_digits(match_score)}٪ تطابق")
         min_p_fmt = to_persian_digits(f"{min_p:,}")
         sc_fmt = to_persian_digits(sc)
@@ -251,17 +260,35 @@ def _compose_assistant_summary_fa(
     stores: list[Any],
     clarification_triggered: bool,
     dissatisfaction_triggered: bool,
+    category_name: str | None = None,
+    preview_candidates: list[dict[str, Any]] | None = None,
 ) -> str:
     if dissatisfaction_triggered:
         return (
             "متوجه شدم پیشنهادهای قبلی دقیقاً مطابق سلیقه یا شرایط شما نبود. "
-            "لطفاً در کارت زیر مشخص کنید کدام معیار (قیمت، مسافت، یا پرداخت اقساطی) برایتان اولویت بالاتری دارد تا لیست فروشگاه‌ها را فوراً بازآرایی کنم:"
+            "لطفاً در فرم زیر مشخص کنید کدام معیار (قیمت، مسافت، یا پرداخت اقساطی) برایتان اولویت بالاتری دارد تا پس از تکمیل اطلاعات، پیشنهادهای دقیق را برایتان آماده کنم:"
         )
     if clarification_triggered:
-        cat_name = products[0].category_name if products else "محصول مورد نظر"
+        cat_name = category_name or (products[0].category_name if products else "محصول مورد نظر")
+        previews = preview_candidates or []
+        if previews:
+            bullet_lines = []
+            for p in previews[:3]:
+                p_min = to_persian_digits(f"{int(p.get('min_price_toman') or 0):,}")
+                p_sc = to_persian_digits(int(p.get("store_count") or 1))
+                bullet_lines.append(
+                    f"- **{p['title']}** (شروع از {p_min} تومان در {p_sc} فروشگاه)"
+                )
+            items_block = "\n".join(bullet_lines)
+            return (
+                f"بر اساس جستجو در بازار حضوری تهران در دستهٔ **«{cat_name}»**، این گزینه‌های مرتبط موجود هستند:\n\n"
+                f"{items_block}\n\n"
+                "این‌ها در فروشگاه‌های تهران موجودند؛ ولی **برای این‌که دقیق‌تر باشیم**، در فرم زیر بهم بگو کدوم برات اولویت داره: "
+                "**اونی که بهت نزدیک‌تره و همین الان بازه**، **اونی که ارزان‌تره**، یا **خرید قسطی حضوری (ترب‌پی/اسنپ‌پی) و گارانتی** تا دقیق‌ترین پیشنهادها رو برات بیارم:"
+            )
         return (
-            f"برای اینکه بهترین مدل و نزدیک‌ترین فروشگاه حضوری **«{cat_name}»** را در تهران دقیقاً مطابق شرایطتان پیدا کنم، "
-            "لطفاً اولویت خرید حضوری خودتان را مشخص کنید (در همین حین، برترین گزینه‌های موجود در بازار تهران را هم پایین‌تر برایتان آماده کرده‌ام):"
+            f"برای اینکه بهترین مدل و مناسب‌ترین فروشگاه حضوری **«{cat_name}»** را در تهران دقیقاً مطابق شرایطتان پیدا کنم، "
+            "لطفاً ابتدا در فرم زیر مشخص کنید کدوم مورد برایتان مهم‌تر است (نزدیک‌ترین فروشگاه باز، ارزان‌ترین قیمت، یا خرید قسطی) تا سراغ آیتم‌های دقیق‌تر برویم:"
         )
     if not products and not stores:
         return f"برای عبارت «{query}» در حال حاضر پیشنهاد حضوری مستقیمی یافت نشد. لطفاً نام دقیق‌تر مدل یا دسته‌بندی کالا را وارد کنید."
@@ -321,9 +348,14 @@ async def post_chat_turn(
         redis_client=redis_client,
     )
 
-    # 1. Parallel System One Evaluation (Domain Choice, Intent Choice, 5 Store Scores, Hurdles, Domain Traits)
+    # 1. Parallel System One Evaluation (Domain Choice, Target Category Choice, Intent Choice, 5 Store Scores, Hurdles, Domain Traits)
+    cand_cats = await fetch_candidate_categories(pg_pool, req.message, limit=10)
     try:
-        eval_res = await evaluate_turn_with_jev(req.message, session_context=session)
+        eval_res = await evaluate_turn_with_jev(
+            req.message,
+            session_context=session,
+            candidate_categories=cand_cats,
+        )
         query_vec = await embed_text_async(req.message)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -384,50 +416,95 @@ async def post_chat_turn(
     )
     dissatisfaction_triggered = bool(should_ask and clarify_count >= 1)
 
-    # 7. Retrieve stocked products & physical store offers from PostgreSQL
+    # 7. If asking clarification questions, find preview candidates for the text summary and defer full recommendation cards until user answers
+    min_price = eval_res.min_price_toman
     max_price = req.ui_overrides.max_price_toman or eval_res.max_price_toman
+    clean_search_query = eval_res.product_search_query or req.message
+    price_tier = eval_res.price_tier
+    cat_keywords = eval_res.category_keywords
+    is_acc_req = eval_res.is_accessory_request
     raw_products: list[dict[str, Any]] = []
     raw_offers: list[dict[str, Any]] = []
+    product_cards: list[RecommendedProductItem] = []
+    scored_stores: list[Any] = []
+    comp_matrix: ComparisonTableWidget | None = None
+    cat_probe: list[dict[str, Any]] = []
 
-    if pg_pool is not None:
-        raw_products = await search_products(
-            pg_pool,
-            query=req.message,
-            max_price_toman=max_price,
-            limit=4,
-            redis_client=redis_client,
-        )
-        raw_products = rerank_products_with_domain_traits(
-            raw_products,
-            domain_traits=domain_traits,
-            query=req.message,
-        )
-        target_pids = (
-            [str(req.selected_product_id)]
-            if req.selected_product_id
-            else [str(p["product_id"]) for p in raw_products[:3]]
-        )
-        cat_name = str(raw_products[0]["category_name"]) if raw_products else session.get("active_category_name")
-        raw_offers = await fetch_candidate_offers(
-            pg_pool,
-            product_ids=target_pids,
-            user_lat=req.user_location.lat,
-            user_lng=req.user_location.lng,
-            category_name=cat_name,
-            max_price_toman=max_price,
-            redis_client=redis_client,
-        )
+    if should_ask:
+        if pg_pool is not None:
+            cat_probe = await search_products(
+                pg_pool,
+                query=clean_search_query,
+                min_price_toman=min_price,
+                max_price_toman=max_price,
+                price_tier=price_tier,
+                category_keywords=cat_keywords,
+                is_accessory_request=is_acc_req,
+                limit=3,
+                redis_client=redis_client,
+            )
+            active_cat = (
+                str(cat_probe[0]["category_name"])
+                if cat_probe
+                else (session.get("active_category_name") or "کالای دیجیتال")
+            )
+        else:
+            active_cat = session.get("active_category_name") or "کالای دیجیتال"
+    else:
+        if pg_pool is not None:
+            raw_products = await search_products(
+                pg_pool,
+                query=clean_search_query,
+                min_price_toman=min_price,
+                max_price_toman=max_price,
+                price_tier=price_tier,
+                category_keywords=cat_keywords,
+                is_accessory_request=is_acc_req,
+                limit=8,
+                redis_client=redis_client,
+            )
+            raw_products = rerank_products_with_domain_traits(
+                raw_products,
+                domain_traits=domain_traits,
+                query=clean_search_query,
+            )
+            try:
+                raw_products = await score_candidate_products_with_decision_model(
+                    user_message=req.message,
+                    candidates=raw_products,
+                    domain_traits=domain_traits,
+                    max_price_toman=max_price,
+                    price_tier=price_tier,
+                    limit=4,
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            target_pids = (
+                [str(req.selected_product_id)]
+                if req.selected_product_id
+                else [str(p["product_id"]) for p in raw_products[:3]]
+            )
+            cat_name = str(raw_products[0]["category_name"]) if raw_products else session.get("active_category_name")
+            raw_offers = await fetch_candidate_offers(
+                pg_pool,
+                product_ids=target_pids,
+                user_lat=req.user_location.lat,
+                user_lng=req.user_location.lng,
+                category_name=cat_name,
+                max_price_toman=max_price,
+                redis_client=redis_client,
+            )
 
-    product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
-    scored_stores = score_and_rank_offers(
-        raw_offers,
-        l1_weights=l1_weights,
-        hard_constraints=hard_constraints,
-        dynamic_slots=user_profile.get("dynamic_slots"),
-    )
-    comp_matrix = _build_inline_comparison_matrix(product_cards)
+        product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
+        scored_stores = score_and_rank_offers(
+            raw_offers,
+            l1_weights=l1_weights,
+            hard_constraints=hard_constraints,
+            dynamic_slots=user_profile.get("dynamic_slots"),
+        )
+        comp_matrix = _build_inline_comparison_matrix(product_cards)
+        active_cat = product_cards[0].category_name if product_cards else (session.get("active_category_name") or "کالای دیجیتال")
 
-    active_cat = product_cards[0].category_name if product_cards else (session.get("active_category_name") or "کالای دیجیتال")
     clarification_card = (
         build_clarification_card(active_cat, next_clarify_count) if should_ask else None
     )
@@ -445,13 +522,25 @@ async def post_chat_turn(
         stores=scored_stores,
         clarification_triggered=should_ask,
         dissatisfaction_triggered=dissatisfaction_triggered,
+        category_name=active_cat,
+        preview_candidates=cat_probe,
     )
 
     # 8. Persist updated session (Note: `user_profile.base_weights` is untouched by emergency chat turns per SC-005)
     session["last_query"] = req.message
+    session["product_search_query"] = clean_search_query
+    session["category_keywords"] = cat_keywords
+    session["is_accessory_request"] = is_acc_req
+    session["price_tier"] = price_tier
+    session["min_price_toman"] = min_price
+    session["max_price_toman"] = max_price
     session["active_domain"] = eval_res.domain
     session["active_category_name"] = active_cat
-    session["selected_product_id"] = str(req.selected_product_id) if req.selected_product_id else (product_cards[0].product_id if product_cards else None)
+    session["selected_product_id"] = str(req.selected_product_id) if req.selected_product_id else (product_cards[0].product_id if product_cards else session.get("selected_product_id"))
+    session["session_weights"] = {
+        k: {"score": v.score, "confidence": v.confidence}
+        for k, v in eval_res.session_weights.items()
+    }
     session["effective_weights"] = l1_weights
     session["hard_constraints"] = hard_constraints.model_dump()
     session["clarification_count"] = next_clarify_count
@@ -463,11 +552,15 @@ async def post_chat_turn(
 
     await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
 
-    follow_up_chips = [
-        f"نزدیک‌ترین مغازه باز برای {active_cat}",
-        f"خرید قسطی حضوری با ترب‌پی در {active_cat}",
-        f"ارزان‌ترین فروشگاه {active_cat} در تهران",
-    ]
+    follow_up_chips = (
+        []
+        if should_ask
+        else [
+            f"نزدیک‌ترین مغازه باز برای {active_cat}",
+            f"خرید قسطی حضوری با ترب‌پی در {active_cat}",
+            f"ارزان‌ترین فروشگاه {active_cat} در تهران",
+        ]
+    )
 
     return ChatTurnResponse(
         session_id=req.session_id,
@@ -506,24 +599,84 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
         redis_client=redis_client,
     )
 
-    deltas: dict[str, float] = {}
-    if req.feedback_type == "clarification_choice":
-        deltas.update(
-            map_clarification_answers_to_deltas(
-                selected_option_id=req.selected_option_id,
-                answers=req.clarification_answers,
+    last_query = str(session.get("last_query") or session.get("active_category_name") or "گوشی موبایل")
+    clean_search_query = str(session.get("product_search_query") or last_query)
+    cat_keywords: list[str] = list(session.get("category_keywords") or [])
+    is_acc_req = bool(session.get("is_accessory_request") or False)
+    saved_price_tier = str(session.get("price_tier") or "mid")
+    saved_min_price = session.get("min_price_toman")
+    min_price = int(saved_min_price) if isinstance(saved_min_price, (int, float)) and saved_min_price > 0 else None
+    saved_max_price = session.get("max_price_toman")
+    max_price = int(saved_max_price) if isinstance(saved_max_price, (int, float)) and saved_max_price > 0 else None
+    hard_raw = dict(session.get("hard_constraints") or {})
+
+    # Restore Turn 1's session_weights so priorities mentioned in Turn 1 are preserved alongside Turn 2 answers
+    prior_turn_weights: dict[str, ScoreJudgment] = {}
+    for k, raw_j in (session.get("session_weights") or {}).items():
+        if isinstance(raw_j, dict):
+            prior_turn_weights[k] = ScoreJudgment(
+                score=float(raw_j.get("score", 0.0)),
+                confidence=float(raw_j.get("confidence", 0.85)),
             )
-        )
+
+    session_judgments: dict[str, ScoreJudgment] = dict(prior_turn_weights)
+    explicit_slider_deltas: dict[str, float] = {}
+
+    if req.feedback_type == "clarification_choice":
+        option_label_map = {
+            "opt_fastest": "نزدیک‌ترین مغازه باز با حداقل مسافت و زمان",
+            "opt_cheapest": "کمترین قیمت ممکن و ارزان‌ترین فروشگاه در کل تهران",
+            "opt_installment_warranty": "خرید قسطی حضوری (ترب‌پی/اسنپ‌پی) و گارانتی معتبر شرکتی",
+        }
+        parts = [last_query]
+        if req.selected_option_id and req.selected_option_id in option_label_map:
+            parts.append(option_label_map[req.selected_option_id])
+        for ans in (req.clarification_answers or {}).values():
+            if ans and str(ans).strip():
+                parts.append(str(ans).strip())
+        combined_clarification_text = " — ".join(parts)
+
+        try:
+            clarify_eval = await evaluate_turn_with_jev(
+                combined_clarification_text,
+                session_context=session,
+                skip_llm_extraction=True,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        for k, new_j in clarify_eval.session_weights.items():
+            old_j = session_judgments.get(k)
+            if old_j is None or new_j.score >= old_j.score:
+                session_judgments[k] = new_j
+
+        hurdle_thresh = settings.recsys_dealbreaker_noul_threshold
+        if clarify_eval.dealbreakers["require_open_now"].noul >= hurdle_thresh:
+            hard_raw["require_open_now"] = True
+        if clarify_eval.dealbreakers["require_installment"].noul >= hurdle_thresh:
+            hard_raw["require_installment"] = True
+        if clarify_eval.dealbreakers["require_warranty"].noul >= hurdle_thresh:
+            hard_raw["require_warranty"] = True
+
+        if clarify_eval.price_tier in ("budget", "flagship"):
+            saved_price_tier = clarify_eval.price_tier
+        if clarify_eval.min_price_toman:
+            min_price = clarify_eval.min_price_toman
+        if clarify_eval.max_price_toman:
+            max_price = clarify_eval.max_price_toman
+
     if req.weight_overrides:
-        deltas.update({k: float(v) for k, v in req.weight_overrides.items()})
+        explicit_slider_deltas.update({k: float(v) for k, v in req.weight_overrides.items()})
+        for k, v in explicit_slider_deltas.items():
+            session_judgments[k] = ScoreJudgment(score=float(v), confidence=0.96)
 
-    if deltas:
-        user_profile = update_profile_ema_unconstrained(user_profile, explicit_deltas=deltas)
+    if session_judgments or explicit_slider_deltas:
+        user_profile = update_profile_ema_unconstrained(
+            user_profile,
+            session_judgments=session_judgments,
+            explicit_deltas=explicit_slider_deltas or None,
+        )
 
-    # Convert deltas into high-confidence session judgments so L1 weights immediately reflect user choice
-    session_judgments = {
-        k: ScoreJudgment(score=float(v), confidence=0.96) for k, v in deltas.items()
-    }
     active_slots, l1_weights, eff_conf = fuse_and_normalize_weights(user_profile, session_judgments)
 
     # Check if explicit `thumbs_down` triggers the Dissatisfaction-Triggered Second Chance
@@ -544,16 +697,7 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
             )
 
     dissatisfaction_triggered = bool(is_thumbs_down and should_ask)
-    hard_raw = session.get("hard_constraints") or {}
-    if deltas.get("w_installment", 0.0) >= 0.90:
-        hard_raw["require_installment"] = True
-    if deltas.get("w_open_now", 0.0) >= 0.90:
-        hard_raw["require_open_now"] = True
-    if deltas.get("w_warranty", 0.0) >= 0.90 or deltas.get("w_trust_freshness", 0.0) >= 0.90:
-        hard_raw["require_warranty"] = True
     hard_constraints = HardConstraintsState(**hard_raw)
-
-    last_query = str(session.get("last_query") or session.get("active_category_name") or "گوشی موبایل")
     active_domain = str(session.get("active_domain") or "general_retail")
     lat = float(session.get("user_lat") or settings.default_user_lat)
     lng = float(session.get("user_lng") or settings.default_user_lng)
@@ -567,56 +711,87 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
 
     raw_products: list[dict[str, Any]] = []
     raw_offers: list[dict[str, Any]] = []
-    if pg_pool is not None:
-        raw_products = await search_products(pg_pool, query=last_query, limit=4, redis_client=redis_client)
-        raw_products = rerank_products_with_domain_traits(
-            raw_products,
-            domain_traits=domain_traits,
-            query=last_query,
-        )
-        target_pids = [str(p["product_id"]) for p in raw_products[:3]]
-        cat_name = str(raw_products[0]["category_name"]) if raw_products else session.get("active_category_name")
-        raw_offers = await fetch_candidate_offers(
-            pg_pool,
-            product_ids=target_pids,
-            user_lat=lat,
-            user_lng=lng,
-            category_name=cat_name,
-            redis_client=redis_client,
+    product_cards: list[RecommendedProductItem] = []
+    scored_stores: list[Any] = []
+    comp_matrix: ComparisonTableWidget | None = None
+
+    if should_ask:
+        active_cat = str(session.get("active_category_name") or "کالای دیجیتال")
+    else:
+        if pg_pool is not None:
+            raw_products = await search_products(
+                pg_pool,
+                query=clean_search_query,
+                min_price_toman=min_price,
+                max_price_toman=max_price,
+                price_tier=saved_price_tier,
+                category_keywords=cat_keywords,
+                is_accessory_request=is_acc_req,
+                limit=8,
+                redis_client=redis_client,
+            )
+            raw_products = rerank_products_with_domain_traits(
+                raw_products,
+                domain_traits=domain_traits,
+                query=clean_search_query,
+            )
+            try:
+                raw_products = await score_candidate_products_with_decision_model(
+                    user_message=last_query,
+                    candidates=raw_products,
+                    domain_traits=domain_traits,
+                    max_price_toman=max_price,
+                    price_tier=saved_price_tier,
+                    limit=4,
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            target_pids = [str(p["product_id"]) for p in raw_products[:3]]
+            cat_name = str(raw_products[0]["category_name"]) if raw_products else session.get("active_category_name")
+            raw_offers = await fetch_candidate_offers(
+                pg_pool,
+                product_ids=target_pids,
+                user_lat=lat,
+                user_lng=lng,
+                category_name=cat_name,
+                max_price_toman=max_price,
+                redis_client=redis_client,
+            )
+
+        product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
+        scored_stores = score_and_rank_offers(
+            raw_offers,
+            l1_weights=l1_weights,
+            hard_constraints=hard_constraints,
+            dynamic_slots=user_profile.get("dynamic_slots"),
         )
 
-    product_cards = _build_recommended_product_cards(raw_products, domain_traits=domain_traits)
-    scored_stores = score_and_rank_offers(
-        raw_offers,
-        l1_weights=l1_weights,
-        hard_constraints=hard_constraints,
-        dynamic_slots=user_profile.get("dynamic_slots"),
-    )
+        # Contrastive Revealed-Preference update when user selects / thumbs-up a specific store offer (`T017`)
+        if req.feedback_type == "thumbs_up" and req.target_offer_id and scored_stores:
+            shown_feats = [dict(s.feature_scores) for s in scored_stores]
+            sel_store = next((s for s in scored_stores if str(s.offer_id) == str(req.target_offer_id)), scored_stores[0])
+            user_profile = update_store_weights_contrastive(
+                user_profile,
+                selected_features=dict(sel_store.feature_scores),
+                shown_features_list=shown_feats,
+            )
+            active_slots, l1_weights, eff_conf = fuse_and_normalize_weights(user_profile, session_judgments)
 
-    # Contrastive Revealed-Preference update when user selects / thumbs-up a specific store offer (`T017`)
-    if req.feedback_type == "thumbs_up" and req.target_offer_id and scored_stores:
-        shown_feats = [dict(s.feature_scores) for s in scored_stores]
-        sel_store = next((s for s in scored_stores if str(s.offer_id) == str(req.target_offer_id)), scored_stores[0])
-        user_profile = update_store_weights_contrastive(
-            user_profile,
-            selected_features=dict(sel_store.feature_scores),
-            shown_features_list=shown_feats,
-        )
-        active_slots, l1_weights, eff_conf = fuse_and_normalize_weights(user_profile, session_judgments)
+        comp_matrix = _build_inline_comparison_matrix(product_cards)
+        active_cat = product_cards[0].category_name if product_cards else (session.get("active_category_name") or "کالای دیجیتال")
 
-    comp_matrix = _build_inline_comparison_matrix(product_cards)
-    active_cat = product_cards[0].category_name if product_cards else (session.get("active_category_name") or "کالای دیجیتال")
     clarification_card = (
         build_clarification_card(active_cat, next_clarify_count) if should_ask else None
     )
 
-    if dissatisfaction_triggered:
+    if should_ask:
         assistant_text = _compose_assistant_summary_fa(
             query=last_query,
-            products=product_cards,
-            stores=scored_stores,
+            products=[],
+            stores=[],
             clarification_triggered=True,
-            dissatisfaction_triggered=True,
+            dissatisfaction_triggered=dissatisfaction_triggered,
+            category_name=active_cat,
         )
     else:
         assistant_text = (
@@ -627,6 +802,7 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
                 stores=scored_stores,
                 clarification_triggered=False,
                 dissatisfaction_triggered=False,
+                category_name=active_cat,
             )
         )
 
@@ -644,7 +820,7 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
         widget_type="clarification" if should_ask else "store_ranking",
         clarification_card=clarification_card,
         recsys_state=RecSysStatePayload(
-            effective_confidence=max(eff_conf, 0.88 if deltas else eff_conf),
+            effective_confidence=max(eff_conf, 0.88 if session_judgments else eff_conf),
             clarification_count=next_clarify_count,
             dissatisfaction_triggered=dissatisfaction_triggered,
             active_weights=active_slots,
@@ -653,7 +829,9 @@ async def post_feedback(req: FeedbackRequest, request: Request) -> ChatTurnRespo
         recommended_products=product_cards,
         stores=scored_stores,
         comparison_matrix=comp_matrix,
-        follow_up_chips=[
+        follow_up_chips=[]
+        if should_ask
+        else [
             "نمایش روی نقشه تهران",
             "فقط فروشگاه‌های دارای ترب‌پی",
             "مقایسه مشخصات فنی مدل‌ها",

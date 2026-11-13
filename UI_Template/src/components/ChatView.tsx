@@ -19,6 +19,7 @@ import { TorobLogo } from './TorobLogo';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { SearchingPapersAnimation } from './SearchingPapersAnimation';
 import { FeatureClarificationCard } from './FeatureClarificationCard';
+import { InteractiveMap } from './InteractiveMap';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -324,6 +325,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         {/* Collapsible Store Cards Area */}
                         {expandedShopOffers[msg.id] && (
                           <div className="mt-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                            {/* Inline Interactive Map right inside Chat before clicking any external map */}
+                            <InteractiveMap
+                              offers={msg.shopOffers}
+                              userLocation={userLocation}
+                              onStartShoppingTrip={onStartShoppingTrip}
+                              compact={true}
+                            />
+
                             <div className="flex items-center justify-between text-[11px] font-bold text-neutral-300 px-1">
                               <span>فروشگاه‌های حضوری نزدیک شما:</span>
                               <button

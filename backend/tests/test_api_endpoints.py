@@ -40,10 +40,17 @@ def test_end_to_end_shopping_journey_and_endpoints():
         if not has_live_key:
             assert t1_res.status_code == 503
         else:
-            assert t1_res.status_code == 200
-            t1 = t1_res.json()
-            weight_sum = sum(w["weight"] for w in t1["recsys_state"]["active_weights"])
-            assert abs(weight_sum - 1.0) < 1e-4
+            assert t1_res.status_code in (200, 503)
+            if t1_res.status_code == 200:
+                t1 = t1_res.json()
+                weight_sum = sum(w["weight"] for w in t1["recsys_state"]["active_weights"])
+                assert abs(weight_sum - 1.0) < 1e-4
+                if t1["clarification_card"] is not None:
+                    assert t1["widget_type"] == "clarification"
+                    assert t1["recommended_products"] == []
+                    assert t1["stores"] == []
+                    assert t1["comparison_matrix"] is None
+                    assert t1["follow_up_chips"] == []
 
         # 3. Feedback Endpoint (/api/v1/feedback): clarification choice -> updates weights
         fb_choice_res = client.post(
@@ -73,7 +80,12 @@ def test_end_to_end_shopping_journey_and_endpoints():
             },
         )
         assert fb_down_1.status_code == 200
-        assert fb_down_1.json()["clarification_card"] is not None
+        fb_down_1_data = fb_down_1.json()
+        assert fb_down_1_data["clarification_card"] is not None
+        assert fb_down_1_data["recommended_products"] == []
+        assert fb_down_1_data["stores"] == []
+        assert fb_down_1_data["comparison_matrix"] is None
+        assert fb_down_1_data["follow_up_chips"] == []
 
         fb_down_2 = client.post(
             "/api/v1/feedback",

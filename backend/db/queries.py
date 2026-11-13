@@ -6,6 +6,7 @@ Enforces strict separation of `offers.csv` (verified stocked products) vs.
 
 import json
 import math
+import re
 from typing import Any
 
 import asyncpg
@@ -19,44 +20,34 @@ from backend.db.normalizer import (
 )
 from backend.db.redis_cache import get_cached_json, query_cache_key, set_cached_json
 
-_STOPWORDS_FA = {
+# Generic Persian grammatical particles only (never product or intent keywords)
+_PARTICLES_FA = {
     "یه",
     "یک",
+    "من",
+    "می",
+    "خوام",
+    "خواهم",
     "میخوام",
     "میخواهم",
     "بخرم",
     "خرید",
     "حضوری",
     "برای",
-    "تهران",
-    "سمت",
-    "نزدیک",
-    "مغازه",
-    "فروشگاه",
-    "ارزون",
-    "ارزان",
-    "ارزانترین",
-    "ارزونترین",
-    "سریع",
-    "سریعترین",
-    "بهترین",
-    "خوب",
-    "الان",
-    "همین",
-    "باز",
-    "قسطی",
-    "اقساطی",
     "با",
     "در",
     "از",
     "تا",
-    "میلیون",
-    "تومان",
-    "تومن",
-    "چی",
-    "کجا",
-    "کجاست",
+    "رو",
+    "را",
+    "که",
+    "یا",
+    "هم",
 }
+
+_ACCESSORY_CATEGORY_REGEX = (
+    r"(لوازم جانبی|قطعات|باتری|کیف و کاور|محافظ صفحه|گلس|شارژر|کابل و مبدل|پایه نگهدارنده|تاچ و ال سی دی|فلت و برد|ابزار تعمیر)"
+)
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -77,9 +68,9 @@ def estimate_travel_minutes(distance_km: float) -> tuple[int, int]:
 
 
 def extract_search_tokens(query: str) -> list[str]:
-    """Extract normalized meaningful search tokens from a natural-language Persian query."""
+    """Extract normalized search tokens without grammatical particles."""
     norm = normalize_persian_text(query)
-    tokens = [t for t in norm.split() if len(t) >= 2 and t not in _STOPWORDS_FA and not t.isdigit()]
+    tokens = [t for t in norm.split() if len(t) >= 2 and t not in _PARTICLES_FA and not t.isdigit()]
     return tokens[:6]
 
 
@@ -88,16 +79,14 @@ def rerank_products_with_domain_traits(
     domain_traits: list[dict[str, Any]] | None = None,
     query: str = "",
 ) -> list[dict[str, Any]]:
-    """Stage-1 domain-trait product re-ranking (`T009`).
+    """Annotate candidate products with matched domain traits (`user_trait_memory`) for UI card display.
 
-    Boosts candidate products whose title or specs align with the user's retrieved
-    `domain_traits` (from `user_trait_memory`) and records matched traits for card display.
+    Actual candidate scoring and ranking is performed by `score_candidate_products_with_decision_model` (`gemini-decision-1`).
     """
     if not raw_products:
         return []
     traits = domain_traits or []
-    norm_q = normalize_persian_text(query)
-    reranked: list[dict[str, Any]] = []
+    annotated: list[dict[str, Any]] = []
     for prod in raw_products:
         item = dict(prod)
         specs_dict = item.get("specs") or {}
@@ -106,37 +95,139 @@ def rerank_products_with_domain_traits(
             + " ".join(f"{k} {v}" for k, v in specs_dict.items())
         )
         matched_prefs: list[str] = []
-        bonus = 0.0
         for t in traits:
             pref = str(t.get("preference") or "").strip()
             aspect = str(t.get("aspect") or "").strip()
-            conf = float(t.get("confidence", 0.85))
             pref_tokens = [tok for tok in normalize_persian_text(pref).split() if len(tok) >= 2]
             aspect_tokens = [tok for tok in normalize_persian_text(aspect).split() if len(tok) >= 2]
-            if any(tok in blob for tok in pref_tokens):
-                bonus += 0.14 * conf
+            if any(tok in blob for tok in pref_tokens) or any(tok in blob for tok in aspect_tokens):
                 matched_prefs.append(pref)
-            elif any(tok in blob for tok in aspect_tokens):
-                bonus += 0.07 * conf
-                matched_prefs.append(pref)
-            elif traits and len(matched_prefs) == 0:
-                # Apply mild personal context alignment when user has active domain traits
-                bonus += 0.03 * conf
-                matched_prefs.append(pref)
+        if not matched_prefs and traits:
+            matched_prefs.append(str(traits[0].get("preference") or "").strip())
+        item["matched_traits"] = [m for m in matched_prefs if m][:2]
+        annotated.append(item)
+    return annotated
 
-        if norm_q and any(tok in blob for tok in extract_search_tokens(norm_q)):
-            bonus += 0.04
 
-        base_sim = float(item.get("trgm_sim") or 0.65)
-        item["trgm_sim"] = round(min(0.99, base_sim + bonus), 4)
-        item["matched_traits"] = matched_prefs[:2]
-        reranked.append(item)
+async def fetch_candidate_categories(
+    pg_pool: asyncpg.Pool | None,
+    query: str,
+    limit: int = 10,
+) -> list[str]:
+    """Retrieve top candidate `category_name`s from PostgreSQL matching any token in `query` (`< 5 ms`).
 
-    reranked.sort(
-        key=lambda p: (float(p.get("trgm_sim") or 0.0), int(p.get("store_count") or 0)),
-        reverse=True,
+    These candidate categories are passed directly to `gemini-decision-1` (`choice`) so the Decision Model
+    selects the exact product category without any hardcoded category rules.
+    """
+    if pg_pool is None:
+        return []
+    tokens = extract_search_tokens(query)
+    if not tokens:
+        return []
+    sql = """
+        WITH tok_cats AS (
+            SELECT
+                tok,
+                category_name,
+                word_similarity(tok, category_name) AS w_sim,
+                SUM(offer_count) AS total_offers,
+                ROW_NUMBER() OVER (
+                    PARTITION BY tok
+                    ORDER BY ROUND(word_similarity(tok, category_name)::numeric, 1) DESC, SUM(offer_count) DESC
+                ) AS rn
+            FROM products
+            CROSS JOIN unnest($1::text[]) AS tok
+            WHERE offer_count > 0
+              AND min_price_toman > 0
+              AND word_similarity(tok, category_name) >= 0.45
+            GROUP BY tok, category_name
+        ),
+        title_cats AS (
+            SELECT
+                category_name,
+                0.85 AS w_sim,
+                SUM(offer_count) AS total_offers
+            FROM products
+            CROSS JOIN unnest($1::text[]) AS tok
+            WHERE offer_count > 0
+              AND min_price_toman > 0
+              AND normalized_name LIKE '%' || tok || '%'
+            GROUP BY category_name
+            ORDER BY SUM(offer_count) DESC
+            LIMIT 4
+        ),
+        combined AS (
+            SELECT category_name, w_sim, total_offers FROM tok_cats WHERE rn <= 3
+            UNION ALL
+            SELECT category_name, w_sim, total_offers FROM title_cats
+        )
+        SELECT category_name, MAX(w_sim) AS sim, MAX(total_offers) AS offers
+        FROM combined
+        GROUP BY category_name
+        ORDER BY sim DESC, offers DESC
+        LIMIT $2
+    """
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(sql, tokens, limit)
+    return [str(r["category_name"]) for r in rows if r["category_name"]]
+
+
+async def _resolve_dynamic_categories_sql(
+    conn: asyncpg.Connection,
+    norm_query: str,
+    category_keywords: list[str] | None = None,
+    is_accessory_request: bool = False,
+) -> list[str]:
+    """Dynamically resolve the best matching `category_name`s in `products`."""
+    probe_terms = [
+        normalize_persian_text(k)
+        for k in (category_keywords or [])
+        if k and len(normalize_persian_text(k)) >= 2
+    ]
+    if norm_query and norm_query not in probe_terms:
+        probe_terms.append(norm_query)
+    if not probe_terms:
+        return []
+
+    # 1. Exact category match if `gemini-decision-1` selected an exact category_name from the database
+    if category_keywords:
+        exact_rows = await conn.fetch(
+            """
+            SELECT DISTINCT category_name
+            FROM products
+            WHERE category_name = ANY($1::text[])
+              AND offer_count > 0
+            LIMIT 1
+            """,
+            category_keywords,
+        )
+        if exact_rows:
+            return [str(exact_rows[0]["category_name"])]
+
+    accessory_filter = (
+        ""
+        if is_accessory_request
+        else f"AND NOT (category_name ~* '{_ACCESSORY_CATEGORY_REGEX}')"
     )
-    return reranked
+    sql = f"""
+        SELECT
+            category_name,
+            MAX(similarity(kw, category_name)) AS cat_sim,
+            SUM(offer_count) AS total_offers
+        FROM products
+        CROSS JOIN unnest($1::text[]) AS kw
+        WHERE offer_count > 0
+          AND min_price_toman > 0
+          AND word_similarity(kw, category_name) >= 0.45
+          {accessory_filter}
+        GROUP BY category_name
+        ORDER BY MAX(similarity(kw, category_name)) DESC, total_offers DESC
+        LIMIT 1
+    """
+    rows = await conn.fetch(sql, probe_terms)
+    if not rows:
+        return []
+    return [str(rows[0]["category_name"])]
 
 
 async def search_products(
@@ -146,42 +237,159 @@ async def search_products(
     limit: int = 6,
     query_embedding: list[float] | None = None,
     redis_client: aioredis.Redis | None = None,
+    min_price_toman: int | None = None,
+    price_tier: str = "mid",
+    category_keywords: list[str] | None = None,
+    is_accessory_request: bool = False,
 ) -> list[dict[str, Any]]:
-    """Search stocked products via `pg_trgm` + token match + optional `pgvector` `<=>` cosine similarity."""
-    tokens = extract_search_tokens(query)
-    norm_q = " ".join(tokens) if tokens else normalize_persian_text(query)
+    """Search stocked products via dynamic SQL category resolution + `price_tier` from `gemini-decision-1`."""
+    raw_norm = normalize_persian_text(query)
+    tokens = extract_search_tokens(raw_norm)
+    norm_q = " ".join(tokens) if tokens else raw_norm
+    norm_cat_kw = [normalize_persian_text(k) for k in (category_keywords or []) if k]
 
     cache_key = query_cache_key(
-        "products",
-        {"q": norm_q, "max_p": max_price_toman, "limit": limit},
+        "products_v6",
+        {
+            "q": norm_q,
+            "cat_kw": norm_cat_kw,
+            "acc": is_accessory_request,
+            "tier": price_tier,
+            "min_p": min_price_toman,
+            "max_p": max_price_toman,
+            "limit": limit,
+        },
     )
     cached = await get_cached_json(redis_client, cache_key)
     if isinstance(cached, list) and cached:
         return cached
 
+    if price_tier == "budget":
+        order_clause = "min_price_toman ASC, offer_count DESC"
+    elif price_tier == "flagship":
+        order_clause = "min_price_toman DESC, offer_count DESC"
+    elif min_price_toman is not None and min_price_toman > 0:
+        order_clause = "offer_count DESC, min_price_toman DESC"
+    else:
+        order_clause = "offer_count DESC, min_price_toman ASC"
+
+    fetch_limit = max(limit * 2, 12)
+    accessory_guard = (
+        ""
+        if is_accessory_request
+        else f"AND NOT (category_name ~* '{_ACCESSORY_CATEGORY_REGEX}')"
+    )
+
     async with pg_pool.acquire() as conn:
         rows: list[Any] = []
-        if tokens:
-            # Build token ILIKE clauses prioritizing products that actually have offers in Tehran
-            like_patterns = [f"%{t}%" for t in tokens[:4]]
-            where_parts = [f"normalized_name LIKE ${i + 2}" for i in range(len(like_patterns))]
-            params: list[Any] = [norm_q, *like_patterns]
+        matched_cats = await _resolve_dynamic_categories_sql(
+            conn,
+            norm_query=norm_q,
+            category_keywords=norm_cat_kw,
+            is_accessory_request=is_accessory_request,
+        )
+
+        # 1. Search inside dynamically matched categories first
+        if matched_cats:
+            cat_word_set = {
+                w
+                for c in matched_cats
+                for w in normalize_persian_text(c).split()
+                if len(w) >= 2
+            } | {
+                w
+                for kw in norm_cat_kw
+                for w in kw.split()
+                if len(w) >= 2
+            }
+            specific_tokens = [t for t in tokens if t not in cat_word_set]
+
+            params: list[Any] = [norm_q, matched_cats]
+            token_clause = ""
+            if specific_tokens:
+                like_parts = []
+                for t in specific_tokens[:3]:
+                    params.append(f"%{t}%")
+                    like_parts.append(f"normalized_name LIKE ${len(params)}")
+                token_clause = f" AND ({' AND '.join(like_parts)})"
+
             price_clause = ""
+            if min_price_toman is not None and min_price_toman > 0:
+                params.append(min_price_toman)
+                price_clause += f" AND min_price_toman >= ${len(params)}"
             if max_price_toman is not None and max_price_toman > 0:
                 params.append(max_price_toman)
-                price_clause = f" AND min_price_toman <= ${len(params)}"
-            params.append(limit)
+                price_clause += f" AND min_price_toman <= ${len(params)}"
+            params.append(fetch_limit)
+
+            sql_cat = f"""
+                SELECT
+                    product_id, persian_title, model_name, category_name, brand_name,
+                    image_url, specs_json, min_price_toman, max_price_toman, offer_count,
+                    GREATEST(word_similarity($1, normalized_name), 0.72) AS trgm_sim
+                FROM products
+                WHERE offer_count > 0
+                  AND min_price_toman > 0
+                  AND persian_title NOT LIKE '%حذف%'
+                  AND category_name = ANY($2::text[])
+                  {token_clause}
+                  {price_clause}
+                ORDER BY {order_clause}
+                LIMIT ${len(params)}
+            """
+            rows = await conn.fetch(sql_cat, *params)
+
+            # Relax specific_tokens / min_price inside the matched categories if strict match yielded 0 rows
+            if not rows:
+                params_relaxed: list[Any] = [norm_q, matched_cats]
+                price_clause_rel = ""
+                if max_price_toman is not None and max_price_toman > 0:
+                    params_relaxed.append(max_price_toman)
+                    price_clause_rel = f" AND min_price_toman <= ${len(params_relaxed)}"
+                params_relaxed.append(fetch_limit)
+                sql_cat_rel = f"""
+                    SELECT
+                        product_id, persian_title, model_name, category_name, brand_name,
+                        image_url, specs_json, min_price_toman, max_price_toman, offer_count,
+                        GREATEST(word_similarity($1, normalized_name), 0.70) AS trgm_sim
+                    FROM products
+                    WHERE offer_count > 0
+                      AND min_price_toman > 0
+                      AND persian_title NOT LIKE '%حذف%'
+                      AND category_name = ANY($2::text[])
+                      {price_clause_rel}
+                    ORDER BY {order_clause}
+                    LIMIT ${len(params_relaxed)}
+                """
+                rows = await conn.fetch(sql_cat_rel, *params_relaxed)
+
+        # 2. General token search using `word_similarity` + accessory guard
+        if not rows and tokens:
+            like_patterns = [f"%{t}%" for t in tokens[:4]]
+            where_parts = [f"normalized_name LIKE ${i + 2}" for i in range(len(like_patterns))]
+            params = [norm_q, *like_patterns]
+            price_clause = ""
+            if min_price_toman is not None and min_price_toman > 0:
+                params.append(min_price_toman)
+                price_clause += f" AND min_price_toman >= ${len(params)}"
+            if max_price_toman is not None and max_price_toman > 0:
+                params.append(max_price_toman)
+                price_clause += f" AND min_price_toman <= ${len(params)}"
+            params.append(fetch_limit)
 
             sql = f"""
                 SELECT
                     product_id, persian_title, model_name, category_name, brand_name,
                     image_url, specs_json, min_price_toman, max_price_toman, offer_count,
-                    similarity(normalized_name, $1) AS trgm_sim
+                    word_similarity($1, normalized_name) AS trgm_sim
                 FROM products
                 WHERE offer_count > 0
+                  AND min_price_toman > 0
+                  AND persian_title NOT LIKE '%حذف%'
+                  {accessory_guard}
                   AND ({' AND '.join(where_parts)})
                   {price_clause}
-                ORDER BY trgm_sim DESC, offer_count DESC
+                ORDER BY {order_clause}
                 LIMIT ${len(params)}
             """
             rows = await conn.fetch(sql, *params)
@@ -192,12 +400,15 @@ async def search_products(
                     SELECT
                         product_id, persian_title, model_name, category_name, brand_name,
                         image_url, specs_json, min_price_toman, max_price_toman, offer_count,
-                        similarity(normalized_name, $1) AS trgm_sim
+                        word_similarity($1, normalized_name) AS trgm_sim
                     FROM products
                     WHERE offer_count > 0
+                      AND min_price_toman > 0
+                      AND persian_title NOT LIKE '%حذف%'
+                      {accessory_guard}
                       AND ({' OR '.join(where_parts)})
                       {price_clause}
-                    ORDER BY trgm_sim DESC, offer_count DESC
+                    ORDER BY trgm_sim DESC, {order_clause}
                     LIMIT ${len(params)}
                 """
                 rows = await conn.fetch(sql_or, *params)
@@ -212,6 +423,7 @@ async def search_products(
                     0.5 AS trgm_sim
                 FROM products
                 WHERE offer_count > 0
+                  AND min_price_toman > 0
                 ORDER BY offer_count DESC
                 LIMIT $1
                 """,
@@ -219,7 +431,17 @@ async def search_products(
             )
 
         results: list[dict[str, Any]] = []
+        seen_signatures: set[tuple[int, str]] = set()
         for r in rows:
+            min_p = int(r["min_price_toman"] or 0)
+            # Deduplicate duplicate product listings that share the exact same price and model code
+            norm_title = normalize_persian_text(r["persian_title"])
+            model_codes = [m for m in re.findall(r"[a-z0-9]{3,}", norm_title) if not m.isdigit()]
+            sig_key = (min_p, model_codes[0] if model_codes else norm_title[:18])
+            if sig_key in seen_signatures:
+                continue
+            seen_signatures.add(sig_key)
+
             specs = (
                 json.loads(r["specs_json"])
                 if isinstance(r["specs_json"], str)
@@ -234,13 +456,15 @@ async def search_products(
                     "category_name": r["category_name"],
                     "brand_name": r["brand_name"],
                     "image_url": r["image_url"] or "",
-                    "min_price_toman": int(r["min_price_toman"] or 0),
+                    "min_price_toman": min_p,
                     "max_price_toman": int(r["max_price_toman"] or 0),
                     "store_count": int(r["offer_count"] or 0),
                     "specs": {k: str(v) for k, v in list(specs.items())[:8]},
                     "trgm_sim": float(r["trgm_sim"] or 0.5),
                 }
             )
+            if len(results) >= limit:
+                break
 
         await set_cached_json(redis_client, cache_key, results, settings.redis_qcache_ttl_seconds)
         return results

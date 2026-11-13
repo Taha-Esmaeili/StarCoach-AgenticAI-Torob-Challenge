@@ -92,11 +92,14 @@ export const StoresView: React.FC<StoresViewProps> = ({
     return Array.from(set);
   }, [offers]);
 
-  // Filter and sort offers
+  // Filter and sort offers (if selectedProduct has exact matches in `offers`, filter by it; otherwise show all category offers)
   const filteredOffers = useMemo(() => {
+    const hasExactProductOffers =
+      selectedProduct && offers.some((o) => o.productId === selectedProduct.id);
     return offers
       .filter((o) => {
-        if (selectedProduct && o.productId !== selectedProduct.id) return false;
+        if (hasExactProductOffers && selectedProduct && o.productId !== selectedProduct.id)
+          return false;
         if (filterOpenOnly && !o.isOpenNow) return false;
         if (filterTorobPay && !o.torobPayAccepted) return false;
         if (filterInstallment && o.installmentOptions.length === 0) return false;
