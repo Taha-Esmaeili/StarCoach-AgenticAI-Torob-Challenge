@@ -299,6 +299,8 @@ export async function postFeedback(payload: {
   session_id: string;
   user_id: string;
   feedback_type: 'clarification_choice' | 'thumbs_up' | 'thumbs_down' | 'weight_override' | 'price_discrepancy';
+  target_offer_id?: string | number;
+  target_product_id?: string | number;
   selected_option_id?: string;
   clarification_answers?: Record<string, string>;
   weight_overrides?: Record<string, number>;

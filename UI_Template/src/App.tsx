@@ -207,16 +207,39 @@ export function App() {
     }
   };
 
-  // Handle explicit 👍 / 👎 feedback (`thumbs_down` triggers Round-2 Dissatisfaction Clarification) (`T020`)
+  const recordPositiveOfferSelection = (offer: ShopOffer) => {
+    void postFeedback({
+      session_id: sessionIdRef.current,
+      user_id: userIdRef.current,
+      feedback_type: 'thumbs_up',
+      target_offer_id: offer.id,
+      target_product_id: offer.productId,
+      user_location: { lat: userLocation.lat, lng: userLocation.lng },
+    })
+      .then((data) => {
+        if (data.recsys_state?.active_weights) {
+          setActiveWeights(data.recsys_state.active_weights);
+        }
+      })
+      .catch(() => {
+        // non-blocking revealed-preference telemetry
+      });
+  };
+
+  // Handle explicit 👍 / 👎 feedback (`thumbs_down` triggers Round-2 Dissatisfaction Clarification)
   const handleFeedback = async (
-    _messageId: string,
+    messageId: string,
     feedbackType: 'thumbs_up' | 'thumbs_down'
   ) => {
+    const targetMsg = messages.find((m) => m.id === messageId);
+    const primaryOffer = targetMsg?.shopOffers?.[0] || allShopOffers[0];
     try {
       const data = await postFeedback({
         session_id: sessionIdRef.current,
         user_id: userIdRef.current,
         feedback_type: feedbackType,
+        target_offer_id: feedbackType === 'thumbs_up' ? primaryOffer?.id : undefined,
+        target_product_id: feedbackType === 'thumbs_up' ? primaryOffer?.productId : undefined,
         user_location: { lat: userLocation.lat, lng: userLocation.lng },
       });
       if (data.recsys_state?.active_weights) {
@@ -296,10 +319,14 @@ export function App() {
               isLoading={isLoading}
               userLocation={userLocation}
               onSelectProduct={(p) => setSelectedProduct(p)}
-              onStartVoiceCall={(offer) => setContactModalOffer(offer)}
+              onStartVoiceCall={(offer) => {
+                setContactModalOffer(offer);
+                recordPositiveOfferSelection(offer);
+              }}
               onStartShoppingTrip={(offer) => {
                 setActiveTripOffer(offer);
                 setIsTripMinimized(false);
+                recordPositiveOfferSelection(offer);
               }}
               onNavigateToStores={() => setActiveTab('stores')}
               onSubmitFeatureClarification={handleFeatureClarificationSubmit}
@@ -312,10 +339,14 @@ export function App() {
               offers={allShopOffers}
               selectedProduct={selectedProduct}
               userLocation={userLocation}
-              onStartVoiceCall={(offer) => setContactModalOffer(offer)}
+              onStartVoiceCall={(offer) => {
+                setContactModalOffer(offer);
+                recordPositiveOfferSelection(offer);
+              }}
               onStartShoppingTrip={(offer) => {
                 setActiveTripOffer(offer);
                 setIsTripMinimized(false);
+                recordPositiveOfferSelection(offer);
               }}
               filterOpenOnly={filterOpenOnly}
               filterTorobPay={filterTorobPay}

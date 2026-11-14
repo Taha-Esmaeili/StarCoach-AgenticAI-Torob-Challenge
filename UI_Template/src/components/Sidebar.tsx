@@ -152,13 +152,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
 
-            {/* Live 15-Parameter Adaptive RecSys Weights (`T019`) */}
+            {/* Live 5+1 Adaptive Store RecSys Weights */}
             {activeWeights && activeWeights.length > 0 && (
               <div className="pt-3 border-t border-[#1c1c24]">
                 <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 px-2 mb-2">
                   <span className="flex items-center gap-1.5">
                     <SlidersHorizontal className="w-3.5 h-3.5 text-[#ff4d79]" />
-                    <span>وزن‌های ۱۵گانه الگوریتم (L1=۱۰۰٪)</span>
+                    <span>وزن‌های تطبیقی فروشگاه (L1=۱۰۰٪)</span>
                   </span>
                   <span className="text-[10px] text-[#ff7597] font-mono">
                     {activeWeights.length.toLocaleString('fa-IR')} پارامتر
