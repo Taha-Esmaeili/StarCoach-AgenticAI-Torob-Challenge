@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, Product, ShopOffer, UserLocation } from '../types';
 import {
-  Send,
+  SendHorizontal,
   PhoneCall,
   Store,
   ChevronLeft,
@@ -26,6 +26,7 @@ interface ChatViewProps {
   onSendMessage: (text: string) => void;
   isLoading: boolean;
   userLocation: UserLocation;
+  onOpenLocationPicker?: () => void;
   onSelectProduct: (product: Product) => void;
   onStartVoiceCall: (offer: ShopOffer) => void;
   onStartShoppingTrip?: (offer: ShopOffer) => void;
@@ -39,6 +40,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onSendMessage,
   isLoading,
   userLocation,
+  onOpenLocationPicker,
   onSelectProduct,
   onStartVoiceCall,
   onStartShoppingTrip,
@@ -330,6 +332,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                               offers={msg.shopOffers}
                               userLocation={userLocation}
                               onStartShoppingTrip={onStartShoppingTrip}
+                              onChangeLocation={onOpenLocationPicker}
                               compact={true}
                             />
 
@@ -595,7 +598,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   }`}
                   title="ارسال پیام"
                 >
-                  <Send className="w-4 h-4 transform -scale-x-100" />
+                  <SendHorizontal className="w-4 h-4" />
                 </button>
               </form>
             </div>

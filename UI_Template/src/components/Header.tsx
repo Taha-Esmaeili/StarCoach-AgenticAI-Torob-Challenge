@@ -1,6 +1,6 @@
 import React from 'react';
-import { ActiveTab } from '../types';
-import { MessageSquareText, Store, Clock, Swords } from 'lucide-react';
+import { ActiveTab, UserLocation } from '../types';
+import { MessageSquareText, Store, Clock, Swords, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TorobLogo } from './TorobLogo';
 
@@ -10,6 +10,8 @@ interface HeaderProps {
   showTabs: boolean;
   onToggleSidebar: () => void;
   isSidebarOpen: boolean;
+  userLocation: UserLocation;
+  onOpenLocationPicker: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,6 +20,8 @@ export const Header: React.FC<HeaderProps> = ({
   showTabs,
   onToggleSidebar,
   isSidebarOpen,
+  userLocation,
+  onOpenLocationPicker,
 }) => {
   const tabs = [
     {
@@ -103,8 +107,18 @@ export const Header: React.FC<HeaderProps> = ({
           </AnimatePresence>
         </div>
 
-        {/* Left side: Icon-only History Button, positioned on the other side, never covering messages */}
-        <div className="flex items-center">
+        {/* Left side: Location Picker Pill + History Button */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenLocationPicker}
+            title="انتخاب دستی موقعیت مکانی روی نقشه تهران"
+            className="px-2.5 py-2 rounded-xl bg-[#14141e] hover:bg-[#1b1b29] text-neutral-200 hover:text-white border border-[#252535] hover:border-[#ff4d79]/60 transition-all flex items-center gap-1.5 text-xs font-bold max-w-[165px] sm:max-w-[230px] cursor-pointer"
+          >
+            <MapPin className="w-3.5 h-3.5 text-[#ff4d79] shrink-0" />
+            <span className="truncate">{userLocation.name}</span>
+          </button>
+
           <button
             onClick={onToggleSidebar}
             title={isSidebarOpen ? 'بستن تاریخچه' : 'تاریخچه گفتگوها'}

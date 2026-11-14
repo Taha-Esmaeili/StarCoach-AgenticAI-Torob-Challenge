@@ -1,13 +1,32 @@
 import React from 'react';
-import { Plus, MessageSquare, CheckCircle2, Store, CreditCard, Clock, X, SlidersHorizontal } from 'lucide-react';
+import {
+  Plus,
+  MessageSquare,
+  CheckCircle2,
+  Store,
+  CreditCard,
+  Clock,
+  X,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { TorobLogo } from './TorobLogo';
 import type { ActiveWeightSlotDto } from '../api/client';
+
+export interface SidebarSessionItem {
+  sessionId: string;
+  title: string;
+  updatedAtLabel?: string;
+}
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   onNewChat: () => void;
-  onSelectPrompt: (prompt: string) => void;
+  sessions: SidebarSessionItem[];
+  activeSessionId: string;
+  onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => void;
   filterOpenOnly: boolean;
   setFilterOpenOnly: (val: boolean) => void;
   filterTorobPay: boolean;
@@ -22,7 +41,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onClose,
   onNewChat,
-  onSelectPrompt,
+  sessions,
+  activeSessionId,
+  onSelectSession,
+  onDeleteSession,
   filterOpenOnly,
   setFilterOpenOnly,
   filterTorobPay,
@@ -32,13 +54,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeWeights,
   onWeightChange,
 }) => {
-  const historyItems = [
-    { title: 'من یک اسکوتر برقی مناسب می‌خوام', time: 'امروز' },
-    { title: 'خرید حضوری آیفون ۱۵ پرو در چارسو', time: 'امروز' },
-    { title: 'بهترین اسکوتر برقی از نظر کیفیت', time: 'هفته‌های اخیر' },
-    { title: 'کتونی پیاده‌روی ضد آب در پالادیوم', time: 'هفته‌های اخیر' },
-    { title: 'لپ‌تاپ دانشجویی ارزان در پایتخت', time: 'ماه گذشته' },
-  ];
+  const todayFa = new Date().toLocaleDateString('fa-IR');
 
   return (
     <>
@@ -83,24 +99,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Scrollable Center: History & In-Store Filters */}
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
-            {/* History Section matching Torobchat video */}
+            {/* Real Saved Conversation History */}
             <div>
               <div className="text-[11px] font-bold text-neutral-500 px-2 mb-2">تاریخچه گفتگوها</div>
-              <div className="space-y-1">
-                {historyItems.map((item, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      onSelectPrompt(item.title);
-                      if (window.innerWidth < 768) onClose();
-                    }}
-                    className="w-full text-right flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-neutral-300 hover:bg-[#15151c] hover:text-white transition-colors group"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-neutral-500 group-hover:text-[#ff4d79] shrink-0" />
-                    <span className="truncate flex-1">{item.title}</span>
-                  </button>
-                ))}
-              </div>
+              {sessions.length === 0 ? (
+                <div className="px-3 py-3 rounded-xl bg-[#121218] border border-[#1d1d26] text-[11px] text-neutral-500 text-center">
+                  هنوز گفتگویی ثبت نشده است
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-60 overflow-y-auto pr-0.5">
+                  {sessions.map((item) => {
+                    const isActive = item.sessionId === activeSessionId;
+                    return (
+                      <div
+                        key={item.sessionId}
+                        onClick={() => {
+                          onSelectSession(item.sessionId);
+                          if (window.innerWidth < 768) onClose();
+                        }}
+                        className={`w-full text-right flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-colors group cursor-pointer ${
+                          isActive
+                            ? 'bg-[#1b141c] border border-[#e9325a]/40 text-white'
+                            : 'text-neutral-300 hover:bg-[#15151c] hover:text-white border border-transparent'
+                        }`}
+                      >
+                        <MessageSquare
+                          className={`w-3.5 h-3.5 shrink-0 ${
+                            isActive
+                              ? 'text-[#ff4d79]'
+                              : 'text-neutral-500 group-hover:text-[#ff4d79]'
+                          }`}
+                        />
+                        <span className="truncate flex-1" title={item.title}>
+                          {item.title}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteSession(item.sessionId);
+                          }}
+                          className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg text-neutral-500 hover:text-[#ff4d79] hover:bg-white/5 transition-all shrink-0 cursor-pointer"
+                          title="حذف گفتگو"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* In-Store Live Shopping Filters */}
@@ -120,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="checkbox"
                     checked={filterOpenOnly}
                     onChange={(e) => setFilterOpenOnly(e.target.checked)}
-                    className="w-4 h-4 accent-[#e9325a] rounded cursor-pointer"
+                    className="w-4 h-4 accent-[#e9325a] [color-scheme:dark] rounded cursor-pointer"
                   />
                 </label>
 
@@ -133,7 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="checkbox"
                     checked={filterTorobPay}
                     onChange={(e) => setFilterTorobPay(e.target.checked)}
-                    className="w-4 h-4 accent-[#e9325a] rounded cursor-pointer"
+                    className="w-4 h-4 accent-[#e9325a] [color-scheme:dark] rounded cursor-pointer"
                   />
                 </label>
 
@@ -146,7 +194,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="checkbox"
                     checked={filterInstallment}
                     onChange={(e) => setFilterInstallment(e.target.checked)}
-                    className="w-4 h-4 accent-[#e9325a] rounded cursor-pointer"
+                    className="w-4 h-4 accent-[#e9325a] [color-scheme:dark] rounded cursor-pointer"
                   />
                 </label>
               </div>
@@ -199,17 +247,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          {/* Footer: User profile matching video ("Taha Gonaadi") with TorobLogo */}
+          {/* Footer: Generic TorobChat In-Person Profile */}
           <div className="p-3 border-t border-[#1c1c24] bg-[#09090d]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <TorobLogo size={28} animated={true} withGlow={false} />
                 <div>
-                  <div className="text-xs font-bold text-neutral-200">طه گنابادی</div>
-                  <div className="text-[10px] text-neutral-500">کاربر ترب · تهران</div>
+                  <div className="text-xs font-bold text-neutral-200">کاربر ترب‌چیت</div>
+                  <div className="text-[10px] text-neutral-500">خرید حضوری · تهران</div>
                 </div>
               </div>
-              <span className="text-[10px] text-neutral-600 font-mono">1403/08/02</span>
+              <span className="text-[10px] text-neutral-600 font-mono">{todayFa}</span>
             </div>
           </div>
         </div>

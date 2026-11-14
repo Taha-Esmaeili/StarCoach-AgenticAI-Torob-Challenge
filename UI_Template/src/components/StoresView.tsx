@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ShopOffer, UserLocation, Product } from '../types';
 import {
   MapPin,
@@ -18,6 +18,7 @@ interface StoresViewProps {
   offers: ShopOffer[];
   selectedProduct: Product | null;
   userLocation: UserLocation;
+  onOpenLocationPicker?: () => void;
   onStartVoiceCall: (offer: ShopOffer) => void;
   onStartShoppingTrip?: (offer: ShopOffer) => void;
   filterOpenOnly: boolean;
@@ -29,6 +30,7 @@ export const StoresView: React.FC<StoresViewProps> = ({
   offers,
   selectedProduct,
   userLocation,
+  onOpenLocationPicker,
   onStartVoiceCall,
   onStartShoppingTrip,
   filterOpenOnly,
@@ -42,6 +44,11 @@ export const StoresView: React.FC<StoresViewProps> = ({
     Record<string, { bannerFa: string; offer: ShopOffer } | 'loading'>
   >({});
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLiveFallbacks({});
+    setShowBackupMap({});
+  }, [userLocation.lat, userLocation.lng]);
 
   const toggleBackupOffer = async (offer: ShopOffer) => {
     const nextVisible = !showBackupMap[offer.id];
@@ -149,7 +156,14 @@ export const StoresView: React.FC<StoresViewProps> = ({
             </div>
             <p className="text-xs text-neutral-400 mt-1">
               مقایسه هوشمند قیمت حضوری، مسافت، طبقه/واحد پاساژ و شرایط اقساطی از مبدا{' '}
-              <span className="text-neutral-200 font-semibold">{userLocation.name}</span>
+              <button
+                type="button"
+                onClick={onOpenLocationPicker}
+                className="text-[#ff7597] hover:underline font-bold cursor-pointer"
+                title="تغییر موقعیت مبدأ روی نقشه"
+              >
+                {userLocation.name} (تغییر موقعیت)
+              </button>
             </p>
           </div>
 
@@ -182,6 +196,7 @@ export const StoresView: React.FC<StoresViewProps> = ({
           selectedOfferId={selectedOfferId}
           onSelectOffer={(offer) => setSelectedOfferId(offer.id)}
           onStartShoppingTrip={onStartShoppingTrip}
+          onChangeLocation={onOpenLocationPicker}
         />
 
         {/* Mall / Cluster Quick Chips */}

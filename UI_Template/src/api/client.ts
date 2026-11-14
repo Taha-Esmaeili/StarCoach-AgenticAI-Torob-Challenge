@@ -163,13 +163,67 @@ export interface FallbackStoreResponseDto {
   alternative_store: ScoredStoreOfferDto;
 }
 
+export interface SessionSummaryDto {
+  session_id: string;
+  title: string;
+  active_category_name?: string | null;
+  updated_at: string;
+  turn_count: number;
+}
+
+export interface UiTurnEntryDto {
+  id: string;
+  sender: 'user' | 'assistant';
+  text: string;
+  created_at?: string;
+  turn_response?: ChatTurnResponseDto;
+  submitted_answers?: Record<string, string>;
+  is_submitted?: boolean;
+}
+
+export interface SessionHistoryDetailDto {
+  session_id: string;
+  user_id: string;
+  title: string;
+  active_category_name?: string | null;
+  selected_product_id?: string | null;
+  updated_at: string;
+  require_torob_pay: boolean;
+  hard_constraints: {
+    require_open_now: boolean;
+    require_installment: boolean;
+    require_warranty: boolean;
+  };
+  active_weights: ActiveWeightSlotDto[];
+  ui_turns: UiTurnEntryDto[];
+}
+
+const USER_ID_STORAGE_KEY = 'torob_user_id';
+
+export function getOrCreatePersistentUserId(): string {
+  if (typeof window === 'undefined') return DEFAULT_USER_ID;
+  try {
+    const existing = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+    if (existing && existing.trim()) return existing.trim();
+    const uuidPart =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+        : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const generated = `usr_${uuidPart}`;
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return DEFAULT_USER_ID;
+  }
+}
+
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
 export const API_BASE = env.VITE_API_BASE_PATH || '/api/v1';
 export const DEFAULT_USER_ID = env.VITE_DEFAULT_USER_ID || 'usr_tehran_default';
 export const DEFAULT_USER_LAT = Number(env.VITE_DEFAULT_LAT || 35.7219);
 export const DEFAULT_USER_LNG = Number(env.VITE_DEFAULT_LNG || 51.3347);
 export const MAP_TILE_URL =
-  env.VITE_MAP_TILE_URL || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+  env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 export function mapDtoToProduct(dto: RecommendedProductDto): Product {
   return {
@@ -298,7 +352,13 @@ export async function postChatTurn(payload: {
 export async function postFeedback(payload: {
   session_id: string;
   user_id: string;
-  feedback_type: 'clarification_choice' | 'thumbs_up' | 'thumbs_down' | 'weight_override' | 'price_discrepancy';
+  feedback_type:
+    | 'clarification_choice'
+    | 'thumbs_up'
+    | 'thumbs_down'
+    | 'weight_override'
+    | 'price_discrepancy'
+    | 'location_update';
   target_offer_id?: string | number;
   target_product_id?: string | number;
   selected_option_id?: string;
@@ -330,5 +390,38 @@ export async function fetchFallbackStore(
   }
   const res = await fetch(`${API_BASE}/stores/${offerId}/fallback?${params.toString()}`);
   if (!res.ok) throw new Error(`Fallback store lookup failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchUserSessions(
+  userId: string,
+): Promise<{ user_id: string; sessions: SessionSummaryDto[] }> {
+  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(userId)}/sessions`);
+  if (!res.ok) throw new Error(`User sessions lookup failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSessionDetail(
+  sessionId: string,
+  userId: string,
+): Promise<SessionHistoryDetailDto> {
+  const params = new URLSearchParams({ user_id: userId });
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error(`Session detail lookup failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteUserSession(
+  sessionId: string,
+  userId: string,
+): Promise<{ session_id: string; deleted: boolean }> {
+  const params = new URLSearchParams({ user_id: userId });
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error(`Session delete failed: ${res.status}`);
   return res.json();
 }

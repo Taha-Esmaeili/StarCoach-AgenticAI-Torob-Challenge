@@ -7,7 +7,7 @@ import {
   Target,
   CheckCircle2,
   Edit3,
-  Send,
+  SendHorizontal,
 } from 'lucide-react';
 
 interface FeatureClarificationCardProps {
@@ -200,7 +200,7 @@ export const FeatureClarificationCard: React.FC<FeatureClarificationCardProps> =
             title="ارسال پاسخ‌ها"
             className="p-2.5 rounded-xl bg-gradient-to-r from-[#e9325a] to-[#ff4d79] hover:from-[#ff2d5f] hover:to-[#ff5c85] text-white shadow-lg shadow-[#e9325a]/30 hover:scale-105 active:scale-95 transition-all flex items-center justify-center cursor-pointer"
           >
-            <Send className="w-4 h-4 transform -scale-x-100" />
+            <SendHorizontal className="w-4 h-4" />
           </button>
         </div>
       </form>

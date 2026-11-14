@@ -219,3 +219,24 @@
   mask-composite: exclude;
   pointer-events: none;
 }
+
+/* Scoped Leaflet Night Mode on OpenStreetMap tiles (preserves Persian street labels & custom pins) */
+.torob-map-night .leaflet-container,
+.torob-map-night.leaflet-container {
+  background-color: #161822;
+}
+
+.torob-map-night .leaflet-tile-pane {
+  filter: invert(100%) hue-rotate(180deg) brightness(106%) contrast(85%) saturate(115%);
+}
+
+.torob-map-night .leaflet-control-zoom a {
+  background-color: #181824 !important;
+  color: #f3f4f6 !important;
+  border-color: #2e2e42 !important;
+}
+
+.torob-map-night .leaflet-control-zoom a:hover {
+  background-color: #252538 !important;
+  color: #ff4d79 !important;
+}

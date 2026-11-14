@@ -2,10 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ShopOffer, UserLocation } from '../types';
-import { MapPin, Navigation, Layers } from 'lucide-react';
+import { MapPin, Navigation, Moon, Sun } from 'lucide-react';
 
 const OSM_PERSIAN_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const CARTO_DARK_TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const MAP_STYLE_STORAGE_KEY = 'torob_map_style';
+
+function readInitialMapStyle(): 'persian_osm' | 'dark' {
+  if (typeof window === 'undefined') return 'persian_osm';
+  try {
+    return window.localStorage.getItem(MAP_STYLE_STORAGE_KEY) === 'dark'
+      ? 'dark'
+      : 'persian_osm';
+  } catch {
+    return 'persian_osm';
+  }
+}
 
 interface InteractiveMapProps {
   offers: ShopOffer[];
@@ -13,6 +24,7 @@ interface InteractiveMapProps {
   selectedOfferId?: string | null;
   onSelectOffer?: (offer: ShopOffer) => void;
   onStartShoppingTrip?: (offer: ShopOffer) => void;
+  onChangeLocation?: () => void;
   compact?: boolean;
 }
 
@@ -22,13 +34,13 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   selectedOfferId,
   onSelectOffer,
   onStartShoppingTrip,
+  onChangeLocation,
   compact = false,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const [mapStyle, setMapStyle] = useState<'persian_osm' | 'dark'>('persian_osm');
+  const [mapStyle, setMapStyle] = useState<'persian_osm' | 'dark'>(readInitialMapStyle);
 
   // Initialize Leaflet map and ResizeObserver so tiles never render blank inside modals/tabs
   useEffect(() => {
@@ -42,10 +54,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       attributionControl: false,
     });
 
-    const initialTile = L.tileLayer(OSM_PERSIAN_TILE_URL, {
+    L.tileLayer(OSM_PERSIAN_TILE_URL, {
       maxZoom: 19,
     }).addTo(map);
-    tileLayerRef.current = initialTile;
 
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
@@ -69,24 +80,23 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       resizeObserver?.disconnect();
       map.remove();
       mapInstanceRef.current = null;
-      tileLayerRef.current = null;
       markersLayerRef.current = null;
     };
   }, [userLocation.lat, userLocation.lng]);
 
-  // Switch tile layer style on demand
+  // Toggle night-mode class imperatively on Leaflet container (without React clobbering `leaflet-container` classes) and persist preference
   useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
+    const container = mapContainerRef.current;
+    if (container) {
+      container.classList.toggle('torob-map-night', mapStyle === 'dark');
     }
-    const url = mapStyle === 'persian_osm' ? OSM_PERSIAN_TILE_URL : CARTO_DARK_TILE_URL;
-    const nextLayer = L.tileLayer(url, {
-      maxZoom: 19,
-      subdomains: mapStyle === 'dark' ? 'abcd' : 'abc',
-    }).addTo(map);
-    tileLayerRef.current = nextLayer;
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(MAP_STYLE_STORAGE_KEY, mapStyle);
+      } catch {
+        // ignore storage errors
+      }
+    }
   }, [mapStyle]);
 
   // Render user pin, store pins, and live route polyline
@@ -219,29 +229,52 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <span className="w-2 h-2 rounded-full bg-[#e9325a]" />
             <span>مقصد منتخب</span>
           </span>
-          <span className="inline-flex items-center gap-1 text-sky-400 font-bold">
-            <Navigation className="w-3 h-3" />
-            <span>مبدا: {userLocation.name}</span>
-          </span>
+          {onChangeLocation ? (
+            <button
+              type="button"
+              onClick={onChangeLocation}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 font-bold cursor-pointer transition-colors"
+              title="تغییر دستی موقعیت مبدأ روی نقشه"
+            >
+              <Navigation className="w-3 h-3" />
+              <span>مبدا: {userLocation.name} (تغییر)</span>
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-sky-400 font-bold">
+              <Navigation className="w-3 h-3" />
+              <span>مبدا: {userLocation.name}</span>
+            </span>
+          )}
           <button
             type="button"
             onClick={() =>
               setMapStyle((prev) => (prev === 'persian_osm' ? 'dark' : 'persian_osm'))
             }
-            className="px-2 py-0.5 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] border border-[#34344a] text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer transition-colors"
-            title="تغییر ظاهر نقشه"
+            className="px-2.5 py-1 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] border border-[#34344a] text-[10px] font-bold text-white flex items-center gap-1.5 cursor-pointer transition-colors"
+            title="تغییر ظاهر نقشه (حالت روز / شب)"
           >
-            <Layers className="w-3 h-3 text-[#ff80a0]" />
-            <span>{mapStyle === 'persian_osm' ? 'حالت شب' : 'نقشه فارسی خیابان‌ها'}</span>
+            {mapStyle === 'persian_osm' ? (
+              <>
+                <Moon className="w-3 h-3 text-[#ff80a0]" />
+                <span>حالت شب</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3 h-3 text-amber-400" />
+                <span>حالت روز</span>
+              </>
+            )}
           </button>
         </div>
       </div>
-      <div
-        ref={mapContainerRef}
-        className={`w-full ${compact ? 'h-52 sm:h-60' : 'h-64 sm:h-80'} bg-[#181822]`}
-        style={{ minHeight: compact ? '210px' : '260px' }}
-        aria-label="نقشه فروشگاه‌های حضوری تهران"
-      />
+      <div className={mapStyle === 'dark' ? 'torob-map-night' : ''}>
+        <div
+          ref={mapContainerRef}
+          className={`w-full ${compact ? 'h-52 sm:h-60' : 'h-64 sm:h-80'} bg-[#181822]`}
+          style={{ minHeight: compact ? '210px' : '260px' }}
+          aria-label="نقشه فروشگاه‌های حضوری تهران"
+        />
+      </div>
     </div>
   );
 };
