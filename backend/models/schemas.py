@@ -4,7 +4,7 @@ All default coordinates, user IDs, slot bounds, and clarification round limits a
 sourced dynamically from `backend.config.settings` (.env) rather than hardcoded.
 """
 
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from backend.config import settings
@@ -175,7 +175,14 @@ class ChatTurnResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
     user_id: str = Field(default_factory=lambda: settings.default_user_id, min_length=1)
-    feedback_type: Literal["clarification_choice", "thumbs_up", "thumbs_down", "weight_override", "price_discrepancy"]
+    feedback_type: Literal[
+        "clarification_choice",
+        "thumbs_up",
+        "thumbs_down",
+        "weight_override",
+        "price_discrepancy",
+        "location_update",
+    ]
     target_offer_id: str | int | None = None
     target_product_id: str | int | None = None
     selected_option_id: str | None = None
@@ -231,3 +238,34 @@ class HealthResponse(BaseModel):
     redis_ready: bool = False
     counts: DatasetCounts = Field(default_factory=DatasetCounts)
     jev_engine_mode: Literal["typesafe_sdk", "openai_compatible_system_one"] = "openai_compatible_system_one"
+
+
+class SessionSummaryItem(BaseModel):
+    session_id: str
+    title: str
+    active_category_name: str | None = None
+    updated_at: str
+    turn_count: int = 1
+
+
+class UserSessionsListResponse(BaseModel):
+    user_id: str
+    sessions: list[SessionSummaryItem] = Field(default_factory=list)
+
+
+class SessionHistoryDetailResponse(BaseModel):
+    session_id: str
+    user_id: str
+    title: str
+    active_category_name: str | None = None
+    selected_product_id: str | None = None
+    updated_at: str
+    require_torob_pay: bool = False
+    hard_constraints: HardConstraintsState = Field(default_factory=HardConstraintsState)
+    active_weights: list[ActiveWeightSlot] = Field(default_factory=list)
+    ui_turns: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DeleteSessionResponse(BaseModel):
+    session_id: str
+    deleted: bool = True

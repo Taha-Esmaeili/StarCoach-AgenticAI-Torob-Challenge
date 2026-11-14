@@ -1,7 +1,9 @@
 """FastAPI application entrypoint for Torob Smart In-Person Shopping Assistant (ترب‌چیت حضوری)."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import Any
 
 import asyncpg
@@ -19,7 +21,10 @@ from backend.db.normalizer import (
 )
 from backend.db.postgres import ensure_schema
 from backend.db.profiles import (
+    delete_user_shopping_session,
     fetch_user_traits,
+    get_user_shopping_session_detail,
+    list_user_shopping_sessions,
     load_shopping_session,
     load_user_profile,
     save_shopping_session,
@@ -35,6 +40,7 @@ from backend.db.queries import (
     search_products,
 )
 from backend.models.schemas import (
+    ActiveWeightSlot,
     ChatTurnRequest,
     ChatTurnResponse,
     ClosestOpenShopSummary,
@@ -42,12 +48,16 @@ from backend.models.schemas import (
     CompareProductsResponse,
     ComparisonTableWidget,
     DatasetCounts,
+    DeleteSessionResponse,
     FallbackStoreResponse,
     FeedbackRequest,
     HardConstraintsState,
     HealthResponse,
     RecommendedProductItem,
     RecSysStatePayload,
+    SessionHistoryDetailResponse,
+    SessionSummaryItem,
+    UserSessionsListResponse,
 )
 from backend.recsys.clarifier import (
     build_clarification_card,
@@ -833,13 +843,6 @@ async def post_chat_turn(
     session["hard_constraints"] = hard_constraints.model_dump()
     session["clarification_count"] = next_clarify_count
     session["dissatisfaction_triggered"] = dissatisfaction_triggered
-    session_msgs = list(session.get("messages") or [])
-    session_msgs.append({"role": "user", "text": req.message})
-    session_msgs.append({"role": "assistant", "text": assistant_text})
-    session["messages"] = session_msgs[-20:]
-
-    await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
-
     follow_up_chips = (
         []
         if should_ask
@@ -850,7 +853,7 @@ async def post_chat_turn(
         ]
     )
 
-    return ChatTurnResponse(
+    resp_obj = ChatTurnResponse(
         session_id=req.session_id,
         assistant_text=assistant_text,
         widget_type=widget_type,
@@ -867,6 +870,40 @@ async def post_chat_turn(
         comparison_matrix=comp_matrix,
         follow_up_chips=follow_up_chips,
     )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ts_ms = int(time.time() * 1000)
+    if not str(session.get("title") or "").strip():
+        session["title"] = req.message.strip()[:72]
+    session["active_weight_slots"] = [s.model_dump() for s in active_slots]
+    session_msgs = list(session.get("messages") or [])
+    session_msgs.append({"role": "user", "text": req.message})
+    session_msgs.append({"role": "assistant", "text": assistant_text})
+    session["messages"] = session_msgs[-20:]
+    ui_turns = [t for t in list(session.get("ui_turns") or []) if isinstance(t, dict)]
+    ui_turns.append(
+        {
+            "id": f"user-{ts_ms}",
+            "sender": "user",
+            "text": req.message,
+            "created_at": now_iso,
+        }
+    )
+    ui_turns.append(
+        {
+            "id": f"ai-{ts_ms + 1}",
+            "sender": "assistant",
+            "text": assistant_text,
+            "created_at": now_iso,
+            "turn_response": resp_obj.model_dump(),
+        }
+    )
+    session["ui_turns"] = ui_turns[-40:]
+    session["updated_at"] = now_iso
+
+    await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
+
+    return resp_obj
 
 
 @app.post(f"{settings.api_v1_prefix}/feedback", response_model=ChatTurnResponse)
@@ -1109,7 +1146,7 @@ async def post_feedback(
         need_product_rescore = (
             req.feedback_type == "clarification_choice"
             or (is_targeted_thumbs_down and req.target_offer_id is None and req.target_product_id is not None)
-            or not saved_prod_dicts
+            or (not saved_prod_dicts and req.feedback_type != "location_update")
         )
         if pg_pool is not None and clean_search_query:
             if need_product_rescore:
@@ -1376,12 +1413,7 @@ async def post_feedback(
     session["clarification_count"] = next_clarify_count
     session["dissatisfaction_triggered"] = dissatisfaction_triggered
 
-    # Persist user_profile ONLY when mutated by positive selection (`thumbs_up`) or `weight_override`
-    if profile_mutated:
-        await save_user_profile(user_profile, pg_pool=pg_pool, redis_client=redis_client)
-    await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
-
-    return ChatTurnResponse(
+    resp_obj = ChatTurnResponse(
         session_id=req.session_id,
         assistant_text=assistant_text,
         widget_type="clarification" if should_ask else "store_ranking",
@@ -1404,6 +1436,143 @@ async def post_feedback(
             "مقایسه مشخصات فنی مدل‌ها",
         ],
     )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ts_ms = int(time.time() * 1000)
+    session["active_weight_slots"] = [s.model_dump() for s in active_slots]
+    ui_turns = [t for t in list(session.get("ui_turns") or []) if isinstance(t, dict)]
+
+    if req.feedback_type == "clarification_choice":
+        target_clarify_turn = next(
+            (
+                t
+                for t in reversed(ui_turns)
+                if isinstance(t.get("turn_response"), dict)
+                and t["turn_response"].get("clarification_card")
+                and not t.get("is_submitted")
+            ),
+            None,
+        ) or next(
+            (
+                t
+                for t in reversed(ui_turns)
+                if isinstance(t.get("turn_response"), dict)
+                and t["turn_response"].get("clarification_card")
+            ),
+            None,
+        )
+        if target_clarify_turn is not None:
+            target_clarify_turn["submitted_answers"] = dict(req.clarification_answers or {})
+            target_clarify_turn["is_submitted"] = True
+        ui_turns.append(
+            {
+                "id": f"ai-{ts_ms}",
+                "sender": "assistant",
+                "text": assistant_text,
+                "created_at": now_iso,
+                "turn_response": resp_obj.model_dump(),
+            }
+        )
+    elif req.feedback_type == "thumbs_down" and (should_ask or is_targeted_thumbs_down):
+        ui_turns.append(
+            {
+                "id": f"ai-{ts_ms}",
+                "sender": "assistant",
+                "text": assistant_text,
+                "created_at": now_iso,
+                "turn_response": resp_obj.model_dump(),
+            }
+        )
+    elif req.feedback_type in ("weight_override", "location_update") and scored_stores:
+        for t in reversed(ui_turns):
+            tr = t.get("turn_response")
+            if isinstance(tr, dict) and tr.get("stores"):
+                tr["stores"] = [s.model_dump() for s in scored_stores]
+                tr["recsys_state"] = resp_obj.recsys_state.model_dump()
+                break
+
+    session["ui_turns"] = ui_turns[-40:]
+    session["updated_at"] = now_iso
+
+    # Persist user_profile ONLY when mutated by positive selection (`thumbs_up`) or `weight_override`
+    if profile_mutated:
+        await save_user_profile(user_profile, pg_pool=pg_pool, redis_client=redis_client)
+    await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
+
+    return resp_obj
+
+
+@app.get(
+    f"{settings.api_v1_prefix}/users/{{user_id}}/sessions",
+    response_model=UserSessionsListResponse,
+)
+async def get_user_sessions(user_id: str, request: Request) -> UserSessionsListResponse:
+    """List non-empty saved shopping conversations for `user_id` ordered newest-first."""
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    raw_list = await list_user_shopping_sessions(user_id=user_id, pg_pool=pg_pool, limit=30)
+    return UserSessionsListResponse(
+        user_id=user_id,
+        sessions=[SessionSummaryItem(**item) for item in raw_list],
+    )
+
+
+@app.get(
+    f"{settings.api_v1_prefix}/sessions/{{session_id}}",
+    response_model=SessionHistoryDetailResponse,
+)
+async def get_session_history_detail(
+    session_id: str,
+    request: Request,
+    user_id: str = Query(..., description="Owner user_id for session lookup"),
+) -> SessionHistoryDetailResponse:
+    """Restore full UI conversation turns, active weights, and constraints for `session_id`."""
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    redis_client = getattr(request.app.state, "redis", None)
+    detail = await get_user_shopping_session_detail(
+        session_id=session_id,
+        user_id=user_id,
+        pg_pool=pg_pool,
+        redis_client=redis_client,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Shopping session not found.")
+    return SessionHistoryDetailResponse(
+        session_id=detail["session_id"],
+        user_id=detail["user_id"],
+        title=detail["title"],
+        active_category_name=detail.get("active_category_name"),
+        selected_product_id=detail.get("selected_product_id"),
+        updated_at=detail["updated_at"],
+        require_torob_pay=bool(detail.get("require_torob_pay")),
+        hard_constraints=HardConstraintsState(**(detail.get("hard_constraints") or {})),
+        active_weights=[
+            ActiveWeightSlot(**s)
+            for s in (detail.get("active_weights") or [])
+            if isinstance(s, dict) and "key" in s
+        ],
+        ui_turns=list(detail.get("ui_turns") or []),
+    )
+
+
+@app.delete(
+    f"{settings.api_v1_prefix}/sessions/{{session_id}}",
+    response_model=DeleteSessionResponse,
+)
+async def delete_session_history(
+    session_id: str,
+    request: Request,
+    user_id: str = Query(..., description="Owner user_id for session deletion"),
+) -> DeleteSessionResponse:
+    """Delete a saved shopping conversation from PostgreSQL and Redis."""
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    redis_client = getattr(request.app.state, "redis", None)
+    deleted = await delete_user_shopping_session(
+        session_id=session_id,
+        user_id=user_id,
+        pg_pool=pg_pool,
+        redis_client=redis_client,
+    )
+    return DeleteSessionResponse(session_id=session_id, deleted=deleted)
 
 
 @app.get(f"{settings.api_v1_prefix}/products/compare", response_model=CompareProductsResponse)

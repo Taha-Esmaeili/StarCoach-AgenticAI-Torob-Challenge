@@ -118,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_shops_categories_gin ON shops USING GIN (category
 CREATE INDEX IF NOT EXISTS idx_products_norm_trgm ON products USING GIN (normalized_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_products_spaceless_trgm ON products USING GIN (REPLACE(normalized_name, ' ', '') gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_name);
+CREATE INDEX IF NOT EXISTS idx_shopping_sessions_user_updated ON shopping_sessions (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_products_offer_count ON products (offer_count DESC, min_price_toman ASC);
 
 CREATE INDEX IF NOT EXISTS idx_offers_product_price ON offers (product_id, price_toman ASC);

@@ -1,5 +1,6 @@
 """Write-through persistence for `user_profiles`, category-agnostic `user_trait_memory` (`pgvector`), and `shopping_sessions`."""
 
+from datetime import datetime, timezone
 import json
 from typing import Any
 
@@ -21,6 +22,7 @@ _MEMORY_SESSIONS: dict[str, dict[str, Any]] = {}
 _MEMORY_TRAITS: dict[str, list[dict[str, Any]]] = {}
 
 SESSION_CONTEXT_KEYS = (
+    "title",
     "last_query",
     "product_search_query",
     "catalog_search_terms",
@@ -43,6 +45,9 @@ SESSION_CONTEXT_KEYS = (
     "category_price_span",
     "session_weights",
     "shown_store_features",
+    "recommended_products",
+    "active_weight_slots",
+    "ui_turns",
 )
 
 
@@ -70,6 +75,7 @@ def build_default_session(
         "user_lng": lng if lng is not None else settings.default_user_lng,
         "active_category_name": None,
         "selected_product_id": None,
+        "title": "",
         "last_query": "",
         "product_search_query": "",
         "catalog_search_terms": [],
@@ -92,6 +98,9 @@ def build_default_session(
         "category_price_span": {},
         "session_weights": {},
         "shown_store_features": {},
+        "recommended_products": [],
+        "active_weight_slots": [],
+        "ui_turns": [],
         "effective_weights": {},
         "hard_constraints": {
             "require_open_now": False,
@@ -610,3 +619,195 @@ async def save_shopping_session(
                 )
         except Exception:
             pass
+
+
+def _derive_session_title(ctx: dict[str, Any], messages: list[dict[str, Any]], active_cat: str | None) -> str:
+    title = str(ctx.get("title") or "").strip()
+    if title:
+        return title[:72]
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "user" and str(m.get("text") or "").strip():
+            return str(m["text"]).strip()[:72]
+    if str(ctx.get("last_query") or "").strip():
+        return str(ctx["last_query"]).strip()[:72]
+    return str(active_cat or "گفتگوی خرید حضوری")[:72]
+
+
+async def list_user_shopping_sessions(
+    user_id: str,
+    pg_pool: asyncpg.Pool | None = None,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Return non-empty saved shopping sessions for `user_id` sorted by `updated_at DESC`."""
+    if pg_pool is not None:
+        try:
+            async with pg_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT session_id, active_category_name, session_context_json, messages_json, updated_at
+                    FROM shopping_sessions
+                    WHERE user_id = $1
+                      AND (
+                          jsonb_array_length(COALESCE(messages_json, '[]'::jsonb)) > 0
+                          OR jsonb_array_length(COALESCE(session_context_json->'ui_turns', '[]'::jsonb)) > 0
+                      )
+                    ORDER BY updated_at DESC
+                    LIMIT $2
+                    """,
+                    user_id,
+                    limit,
+                )
+                results: list[dict[str, Any]] = []
+                for r in rows:
+                    ctx = (
+                        json.loads(r["session_context_json"])
+                        if isinstance(r["session_context_json"], str)
+                        else dict(r["session_context_json"] or {})
+                    )
+                    msgs = (
+                        json.loads(r["messages_json"])
+                        if isinstance(r["messages_json"], str)
+                        else list(r["messages_json"] or [])
+                    )
+                    ui_turns = list(ctx.get("ui_turns") or [])
+                    turn_count = max(
+                        1,
+                        sum(1 for t in ui_turns if isinstance(t, dict) and t.get("sender") == "user")
+                        or sum(1 for m in msgs if isinstance(m, dict) and m.get("role") == "user"),
+                    )
+                    upd = r["updated_at"].astimezone(timezone.utc).isoformat() if r["updated_at"] else datetime.now(timezone.utc).isoformat()
+                    results.append(
+                        {
+                            "session_id": str(r["session_id"]),
+                            "title": _derive_session_title(ctx, msgs, r["active_category_name"]),
+                            "active_category_name": r["active_category_name"],
+                            "updated_at": upd,
+                            "turn_count": turn_count,
+                        }
+                    )
+                return results
+        except Exception:
+            pass
+
+    items: list[dict[str, Any]] = []
+    for sid, sess in list(_MEMORY_SESSIONS.items()):
+        if str(sess.get("user_id")) != user_id:
+            continue
+        msgs = list(sess.get("messages") or [])
+        ui_turns = list(sess.get("ui_turns") or [])
+        if not msgs and not ui_turns:
+            continue
+        items.append(
+            {
+                "session_id": sid,
+                "title": _derive_session_title(sess, msgs, sess.get("active_category_name")),
+                "active_category_name": sess.get("active_category_name"),
+                "updated_at": str(sess.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+                "turn_count": max(1, sum(1 for t in ui_turns if isinstance(t, dict) and t.get("sender") == "user")),
+            }
+        )
+    items.sort(key=lambda x: str(x["updated_at"]), reverse=True)
+    return items[:limit]
+
+
+async def get_user_shopping_session_detail(
+    session_id: str,
+    user_id: str,
+    pg_pool: asyncpg.Pool | None = None,
+    redis_client: aioredis.Redis | None = None,
+) -> dict[str, Any] | None:
+    """Fetch full durable UI conversation state for `(session_id, user_id)` without creating empty rows."""
+    sess: dict[str, Any] | None = None
+    updated_iso = datetime.now(timezone.utc).isoformat()
+
+    if pg_pool is not None:
+        try:
+            async with pg_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM shopping_sessions WHERE session_id = $1 AND user_id = $2",
+                    session_id,
+                    user_id,
+                )
+                if row is not None:
+                    updated_iso = (
+                        row["updated_at"].astimezone(timezone.utc).isoformat()
+                        if row["updated_at"]
+                        else updated_iso
+                    )
+        except Exception:
+            row = None
+        if row is not None:
+            sess = await load_shopping_session(
+                session_id=session_id,
+                user_id=user_id,
+                pg_pool=pg_pool,
+                redis_client=redis_client,
+            )
+    elif session_id in _MEMORY_SESSIONS and str(_MEMORY_SESSIONS[session_id].get("user_id")) == user_id:
+        sess = _MEMORY_SESSIONS[session_id]
+
+    if sess is None or str(sess.get("user_id")) != user_id:
+        return None
+
+    msgs = list(sess.get("messages") or [])
+    ui_turns = [t for t in list(sess.get("ui_turns") or []) if isinstance(t, dict)]
+    if not ui_turns and msgs:
+        for idx, m in enumerate(msgs):
+            if not isinstance(m, dict) or not str(m.get("text") or "").strip():
+                continue
+            role = "user" if m.get("role") == "user" else "assistant"
+            ui_turns.append(
+                {
+                    "id": f"hist_{idx}",
+                    "sender": role,
+                    "text": str(m["text"]),
+                    "created_at": updated_iso,
+                }
+            )
+
+    return {
+        "session_id": session_id,
+        "user_id": user_id,
+        "title": _derive_session_title(sess, msgs, sess.get("active_category_name")),
+        "active_category_name": sess.get("active_category_name"),
+        "selected_product_id": sess.get("selected_product_id"),
+        "updated_at": updated_iso,
+        "require_torob_pay": bool(sess.get("require_torob_pay") or False),
+        "hard_constraints": dict(sess.get("hard_constraints") or {}),
+        "active_weights": list(sess.get("active_weight_slots") or []),
+        "ui_turns": ui_turns,
+    }
+
+
+async def delete_user_shopping_session(
+    session_id: str,
+    user_id: str,
+    pg_pool: asyncpg.Pool | None = None,
+    redis_client: aioredis.Redis | None = None,
+) -> bool:
+    """Delete a user's shopping session from memory, Redis, and PostgreSQL."""
+    deleted = False
+    existing_mem = _MEMORY_SESSIONS.get(session_id)
+    if existing_mem and str(existing_mem.get("user_id")) == user_id:
+        _MEMORY_SESSIONS.pop(session_id, None)
+        deleted = True
+
+    if redis_client is not None:
+        try:
+            await redis_client.delete(session_key(session_id))
+        except Exception:
+            pass
+
+    if pg_pool is not None:
+        try:
+            async with pg_pool.acquire() as conn:
+                tag = await conn.execute(
+                    "DELETE FROM shopping_sessions WHERE session_id = $1 AND user_id = $2",
+                    session_id,
+                    user_id,
+                )
+                if tag and not tag.endswith(" 0"):
+                    deleted = True
+        except Exception:
+            pass
+    return deleted
