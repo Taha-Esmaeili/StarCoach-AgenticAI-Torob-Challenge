@@ -1,5 +1,6 @@
-"""PostgreSQL + pgvector + pg_trgm schema DDL and connection pool helpers."""
+"""PostgreSQL + pgvector + pg_trgm schema DDL, idempotent migrations, and connection pool helpers."""
 
+import json
 import asyncpg
 from backend.config import settings
 
@@ -48,7 +49,6 @@ CREATE TABLE IF NOT EXISTS products (
     image_url TEXT NOT NULL DEFAULT '',
     image_urls_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     specs_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-    embedding vector({dim}),
     min_price_toman BIGINT NOT NULL DEFAULT 0,
     max_price_toman BIGINT NOT NULL DEFAULT 0,
     offer_count INTEGER NOT NULL DEFAULT 0
@@ -70,39 +70,26 @@ CREATE TABLE IF NOT EXISTS offers (
 
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id TEXT PRIMARY KEY,
-    base_weights_json JSONB NOT NULL,
-    persona_weights_json JSONB NOT NULL,
+    store_weights_json JSONB NOT NULL,
+    price_percentiles_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     interaction_count INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS user_dynamic_slots (
-    user_id TEXT NOT NULL REFERENCES user_profiles(user_id) ON DELETE CASCADE,
-    slot_id INTEGER NOT NULL,
-    feature_key TEXT NOT NULL,
-    label_fa TEXT NOT NULL,
-    category_name TEXT,
-    weight DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-    confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-    embedding vector({dim}),
-    session_hits INTEGER NOT NULL DEFAULT 1,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (user_id, slot_id)
 );
 
 CREATE TABLE IF NOT EXISTS user_trait_memory (
     trait_id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES user_profiles(user_id) ON DELETE CASCADE,
-    domain TEXT NOT NULL,
+    source_category TEXT NOT NULL DEFAULT '',
     aspect TEXT NOT NULL,
     preference TEXT NOT NULL,
     aspect_embedding vector({dim}),
+    strength DOUBLE PRECISION NOT NULL DEFAULT 0.50,
     hit_count INTEGER NOT NULL DEFAULT 1,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_trait_memory_user_domain
-    ON user_trait_memory (user_id, domain);
+CREATE INDEX IF NOT EXISTS idx_user_trait_memory_user_strength
+    ON user_trait_memory (user_id, strength DESC, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS shopping_sessions (
     session_id TEXT PRIMARY KEY,
@@ -113,6 +100,7 @@ CREATE TABLE IF NOT EXISTS shopping_sessions (
     selected_product_id TEXT,
     effective_weights_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     hard_constraints_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    session_context_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     clarification_count INTEGER NOT NULL DEFAULT 0,
     dissatisfaction_triggered BOOLEAN NOT NULL DEFAULT FALSE,
     messages_json JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -128,6 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_shops_mall_name ON shops (mall_name) WHERE mall_n
 CREATE INDEX IF NOT EXISTS idx_shops_categories_gin ON shops USING GIN (category_names_json);
 
 CREATE INDEX IF NOT EXISTS idx_products_norm_trgm ON products USING GIN (normalized_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_products_spaceless_trgm ON products USING GIN (REPLACE(normalized_name, ' ', '') gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_name);
 CREATE INDEX IF NOT EXISTS idx_products_offer_count ON products (offer_count DESC, min_price_toman ASC);
 
@@ -147,6 +136,81 @@ async def create_pg_pool() -> asyncpg.Pool:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    """Apply PostgreSQL + pgvector + pg_trgm schema DDL."""
+    """Idempotently migrate legacy tables/columns and apply clean PostgreSQL + pgvector + pg_trgm DDL."""
+    default_store_json = json.dumps(settings.default_store_weights, ensure_ascii=False)
     async with pool.acquire() as conn:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+
+        # 1. Purge dead 15-slot table & unused NULL product embedding column
+        await conn.execute("DROP TABLE IF EXISTS user_dynamic_slots CASCADE;")
+        if await conn.fetchval("SELECT to_regclass('public.products') IS NOT NULL"):
+            await conn.execute("ALTER TABLE products DROP COLUMN IF EXISTS embedding;")
+
+        # 2. Migrate existing user_profiles cleanly to store_weights_json + price_percentiles_json
+        if await conn.fetchval("SELECT to_regclass('public.user_profiles') IS NOT NULL"):
+            await conn.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS store_weights_json JSONB;")
+            await conn.execute(
+                "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS price_percentiles_json JSONB NOT NULL DEFAULT '{}'::jsonb;"
+            )
+            has_legacy_base = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'user_profiles' AND column_name = 'base_weights_json'
+                )
+                """
+            )
+            if has_legacy_base:
+                await conn.execute(
+                    """
+                    UPDATE user_profiles
+                    SET store_weights_json = $1::jsonb || jsonb_build_object(
+                        'w_price', COALESCE((base_weights_json->>'w_price')::double precision, ($1::jsonb->>'w_price')::double precision),
+                        'w_distance', COALESCE((base_weights_json->>'w_distance')::double precision, ($1::jsonb->>'w_distance')::double precision),
+                        'w_open_now', COALESCE((base_weights_json->>'w_open_now')::double precision, ($1::jsonb->>'w_open_now')::double precision)
+                    )
+                    WHERE store_weights_json IS NULL
+                    """,
+                    default_store_json,
+                )
+            else:
+                await conn.execute(
+                    "UPDATE user_profiles SET store_weights_json = $1::jsonb WHERE store_weights_json IS NULL;",
+                    default_store_json,
+                )
+            await conn.execute("ALTER TABLE user_profiles ALTER COLUMN store_weights_json SET NOT NULL;")
+            await conn.execute("ALTER TABLE user_profiles DROP COLUMN IF EXISTS base_weights_json;")
+            await conn.execute("ALTER TABLE user_profiles DROP COLUMN IF EXISTS persona_weights_json;")
+
+        # 3. Migrate existing user_trait_memory from hardcoded `domain` to open `source_category` + `strength`
+        if await conn.fetchval("SELECT to_regclass('public.user_trait_memory') IS NOT NULL"):
+            await conn.execute(
+                "ALTER TABLE user_trait_memory ADD COLUMN IF NOT EXISTS source_category TEXT NOT NULL DEFAULT '';"
+            )
+            await conn.execute(
+                "ALTER TABLE user_trait_memory ADD COLUMN IF NOT EXISTS strength DOUBLE PRECISION NOT NULL DEFAULT 0.50;"
+            )
+            has_legacy_domain = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'user_trait_memory' AND column_name = 'domain'
+                )
+                """
+            )
+            if has_legacy_domain:
+                await conn.execute(
+                    "UPDATE user_trait_memory SET source_category = domain WHERE source_category = '' AND domain IS NOT NULL;"
+                )
+                await conn.execute("DROP INDEX IF EXISTS idx_user_trait_memory_user_domain;")
+                await conn.execute("ALTER TABLE user_trait_memory DROP COLUMN IF EXISTS domain;")
+
+        # 4. Add durable session_context_json to shopping_sessions
+        if await conn.fetchval("SELECT to_regclass('public.shopping_sessions') IS NOT NULL"):
+            await conn.execute(
+                "ALTER TABLE shopping_sessions ADD COLUMN IF NOT EXISTS session_context_json JSONB NOT NULL DEFAULT '{}'::jsonb;"
+            )
+
+        # 5. Apply full idempotent DDL & indexes
         await conn.execute(get_schema_ddl(settings.embedding_dim))
+        await conn.execute(INDEX_DDL)

@@ -1,6 +1,8 @@
-"""Phase 1 self-check: validate .env-driven configuration, Pydantic contracts, and /api/v1/health endpoint."""
+"""Phase 1 & Spec 003 contract checks: .env-driven configuration, 5+1 slot bounds, FeedbackRequest DTO, and /api/v1/health."""
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from backend.config import Settings, settings
 from backend.main import app
@@ -20,7 +22,7 @@ def test_settings_env_driven_entities_and_jev_mode():
         llm_base_url="https://custom.llm.local/v1",
         llm_api_key="sk-test-llm",
         recsys_clarify_confidence_threshold=0.52,
-        recsys_dedup_cosine_high_threshold=0.83,
+        recsys_trait_transfer_noul_threshold=0.74,
         recsys_hurdle_penalty_multiplier=0.12,
         redis_session_ttl_seconds=7200,
     )
@@ -28,12 +30,19 @@ def test_settings_env_driven_entities_and_jev_mode():
     assert cfg_fallback.jev_engine_mode == "openai_compatible_system_one"
     assert cfg_fallback.effective_embedding_base_url == "https://custom.llm.local/v1"
     assert cfg_fallback.effective_embedding_api_key == "sk-test-llm"
+    assert cfg_fallback.recsys_total_slots == 6
     assert cfg_fallback.recsys_clarify_confidence_threshold == 0.52
-    assert cfg_fallback.recsys_dedup_cosine_high_threshold == 0.83
+    assert cfg_fallback.recsys_trait_transfer_noul_threshold == 0.74
     assert cfg_fallback.recsys_hurdle_penalty_multiplier == 0.12
     assert cfg_fallback.redis_session_ttl_seconds == 7200
-    assert len(cfg_fallback.default_base_weights) == cfg_fallback.recsys_base_slots
-    assert len(cfg_fallback.default_persona_weights) == cfg_fallback.recsys_persona_slots
+    assert len(cfg_fallback.default_store_weights) == 5
+    assert cfg_fallback.recsys_max_preferences_per_aspect == 2
+    assert cfg_fallback.recsys_custom_offer_top_k == 15
+
+    # Ensure legacy 15-slot attributes were completely purged
+    assert not hasattr(cfg_fallback, "default_base_weights")
+    assert not hasattr(cfg_fallback, "default_persona_weights")
+    assert not hasattr(cfg_fallback, "recsys_dynamic_slots")
 
     cfg_typesafe = Settings(
         typesafe_api_key="ts_live_123",
@@ -67,24 +76,48 @@ def test_pydantic_contracts_validation():
             active_weights=[
                 ActiveWeightSlot(
                     slot=1,
-                    key="w_distance",
-                    label_fa="نزدیکی و مسافت",
+                    key="w_price",
+                    label_fa="کمترین قیمت",
                     slot_group="base",
                     weight=0.5,
                     unconstrained_weight=0.8,
                     confidence=0.9,
-                )
+                ),
+                ActiveWeightSlot(
+                    slot=6,
+                    key="w_offer_custom",
+                    label_fa="تطابق شرط خاص فروشگاهی",
+                    slot_group="dynamic",
+                    weight=0.5,
+                    unconstrained_weight=0.75,
+                    confidence=0.88,
+                ),
             ],
         ),
     )
-    assert resp.recsys_state.active_weights[0].slot == 1
+    assert resp.recsys_state.active_weights[1].slot == 6
+
+    with pytest.raises(ValidationError):
+        ActiveWeightSlot(
+            slot=7,
+            key="w_invalid",
+            label_fa="نامعتبر",
+            slot_group="dynamic",
+            weight=0.1,
+            unconstrained_weight=0.1,
+            confidence=0.5,
+        )
 
     fb = FeedbackRequest(
         session_id="sess_01",
-        feedback_type="thumbs_down",
+        feedback_type="thumbs_up",
+        target_offer_id="offer_123",
+        target_product_id="prod_456",
     )
     assert fb.user_id == settings.default_user_id
-    assert fb.feedback_type == "thumbs_down"
+    assert fb.feedback_type == "thumbs_up"
+    assert fb.target_offer_id == "offer_123"
+    assert fb.target_product_id == "prod_456"
 
 
 def test_health_endpoint_contract():

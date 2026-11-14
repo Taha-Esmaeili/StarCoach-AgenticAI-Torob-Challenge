@@ -1,11 +1,10 @@
 """Anti-Fatigue Clarification Policy ("Ask Once; Re-Ask Only on Dissatisfaction").
 
-Enforces `FR-011` and `SC-004` via `.env` thresholds:
+Zero hardcoded category biases or keyword matchers:
 - Rule 1 (Initial Low-Confidence Gate): Trigger `FeatureClarificationCard` at most ONCE on Turn 1
-  (`clarification_count == 0`) when `effective_confidence < RECSYS_CLARIFY_CONFIDENCE_THRESHOLD` (0.45).
-- Rule 2 (Dissatisfaction Retry Gate): Once `clarification_count == 1`, NEVER ask again during normal
-  conversation. Re-trigger a second targeted clarification (`clarification_count: 1 -> 2`) ONLY if the
-  user explicitly clicks 👎 (`thumbs_down`) OR `Jev` detects `user_dissatisfied.noul >= 0.70`.
+  (`clarification_count == 0`) when `needs_clarification >= 0.70` or `effective_confidence < 0.45`.
+- Rule 2 (Dissatisfaction Retry Gate): Re-trigger a second targeted clarification (`1 -> 2`) ONLY if
+  the user explicitly clicks 👎 (`thumbs_down`) OR `Jev` detects `user_dissatisfied.noul >= 0.70`.
 - Hard Cap: Never exceed `RECSYS_MAX_CLARIFICATION_ROUNDS` (2).
 """
 
@@ -25,23 +24,30 @@ def should_trigger_clarification(
     explicit_thumbs_down: bool = False,
     dissatisfied_noul: float = 0.0,
     needs_clarification_noul: float = 0.0,
+    intent_choice: str = "clarification",
+    is_continuation: bool = False,
 ) -> tuple[bool, int]:
     """Determine whether to display `FeatureClarificationCard` and return `(should_ask, next_count)`."""
     max_rounds = settings.recsys_max_clarification_rounds
     if clarification_count >= max_rounds:
         return False, clarification_count
 
-    # Turn 1 Gate: Ask at most once initially when Jev detects broad/ambiguous intent (`needs_clarification >= 0.70`)
-    # or when effective_confidence falls below the configured threshold
     if clarification_count == 0:
-        if (
-            needs_clarification_noul >= settings.recsys_dissatisfied_noul_threshold
-            or effective_confidence < settings.recsys_clarify_confidence_threshold
+        if explicit_thumbs_down:
+            return True, 1
+        if is_continuation:
+            if dissatisfied_noul >= settings.recsys_dissatisfied_noul_threshold:
+                return True, 1
+            return False, 0
+        if effective_confidence < settings.recsys_clarify_confidence_threshold:
+            return True, 1
+        if needs_clarification_noul >= settings.recsys_dissatisfied_noul_threshold and (
+            intent_choice in ("clarification", "product_discovery")
+            or effective_confidence < 0.78
         ):
             return True, 1
         return False, 0
 
-    # Dissatisfaction-Triggered Second Chance (only when clarification_count == 1)
     is_dissatisfied = explicit_thumbs_down or (
         dissatisfied_noul >= settings.recsys_dissatisfied_noul_threshold
     )
@@ -54,12 +60,13 @@ def should_trigger_clarification(
 def build_clarification_card(
     category_name: str,
     clarification_round: int,
+    custom_questions: list[dict[str, Any]] | None = None,
 ) -> ClarificationCardPayload:
-    """Build a rich Persian RTL `ClarificationCardPayload` compatible with both API contracts and `UI_Template`."""
+    """Build a category-neutral Persian RTL `ClarificationCardPayload` with optional dynamic item questions."""
     cat_title = category_name or "محصول مورد نظر"
     if clarification_round <= 1:
         question_fa = (
-            f"برای اینکه دقیق‌ترین فروشگاه و مدل «{cat_title}» رو در تهران بهتون پیشنهاد بدم، "
+            f"برای اینکه دقیق‌ترین فروشگاه و گزینه «{cat_title}» رو در تهران بهتون پیشنهاد بدم، "
             "کدوم مورد براتون اولویت بیشتری داره؟"
         )
     else:
@@ -81,39 +88,59 @@ def build_clarification_card(
         ),
         ClarificationOption(
             option_id="opt_installment_warranty",
-            label_fa="خرید قسطی حضوری (ترب‌پی/اسنپ‌پی) و گارانتی معتبر",
-            weight_deltas={"w_installment": 0.95, "w_warranty": 0.90, "w_verified_shop": 0.85},
+            label_fa="خرید قسطی حضوری (ترب‌پی/اسنپ‌پی) و فروشگاه معتبر",
+            weight_deltas={"w_installment": 0.95, "w_trust_freshness": 0.92},
         ),
     ]
 
-    questions = [
+    questions: list[FeatureQuestionItem] = [
         FeatureQuestionItem(
             id="timing",
-            title="زمان و فوریت خرید حضوری",
-            question="کی قصد مراجعه به فروشگاه و خرید حضوری دارید؟",
-            impact_badge="بررسی باز بودن فروشگاه و فاصله مکانی",
+            title="زمان و اولویت خرید حضوری",
+            question="کی قصد مراجعه به فروشگاه دارید و چه معیاری برایتان مهم‌تر است؟",
+            impact_badge="تنظیم اولویت مسافت، باز بودن فروشگاه و قیمت",
             icon_type="time",
             options=[
                 "همین الان (نزدیک‌ترین مغازه باز)",
                 "امروز عصر یا فردا",
                 "زمان مهم نیست، ارزان‌ترین مغازه تهران",
             ],
-            placeholder="مثلاً: تا یک ساعت دیگه سمت ولیعصر هستم...",
-        ),
-        FeatureQuestionItem(
-            id="payment",
-            title="نحوه پرداخت و ضمانت",
-            question="آیا نیاز به خرید اقساطی حضوری یا گارانتی شرکتی خاص دارید؟",
-            impact_badge="فیلتر پذیرندگان ترب‌پی / اسنپ‌پی و گارانتی رسمی",
-            icon_type="payment",
-            options=[
-                "پرداخت نقدی (کف قیمت بازار)",
-                "خرید قسطی حضوری با ترب‌پی / اسنپ‌پی",
-                "فقط فروشگاه رسمی با گارانتی ۱۸ ماهه",
-            ],
-            placeholder="مثلاً: قسطی ۴ ماهه بدون ضامن...",
+            placeholder="مثلاً: تا یک ساعت دیگه حضوری می‌رم...",
         ),
     ]
+
+    if custom_questions:
+        for cq in custom_questions[:1]:
+            opts = [str(o).strip() for o in (cq.get("options") or []) if str(o).strip()]
+            if cq.get("question") and len(opts) >= 2:
+                questions.append(
+                    FeatureQuestionItem(
+                        id=str(cq.get("id") or "item_pref"),
+                        title=str(cq.get("title") or f"ویژگی مهم {cat_title}"),
+                        question=str(cq["question"]),
+                        impact_badge=f"تطبیق دقیق مشخصات در دسته {cat_title}",
+                        icon_type="usage",
+                        options=opts[:4],
+                        placeholder="توضیح دلخواه شما درباره مدل یا ویژگی مورد نظر...",
+                    )
+                )
+
+    if len(questions) < 2:
+        questions.append(
+            FeatureQuestionItem(
+                id="payment",
+                title="نحوه پرداخت و اعتبار فروشگاه",
+                question="شرایط پرداخت و اعتبار فروشگاه چقدر برایتان اهمیت دارد؟",
+                impact_badge="بررسی پذیرندگان ترب‌پی / اسنپ‌پی و اعتبار فروشنده",
+                icon_type="payment",
+                options=[
+                    "پرداخت نقدی (کف قیمت بازار)",
+                    "خرید قسطی حضوری با ترب‌پی / اسنپ‌پی",
+                    "فقط فروشگاه رسمی با ضمانت اصالت و سلامت کالا",
+                ],
+                placeholder="مثلاً: خرید اقساطی یا فروشگاه تاییدشده...",
+            )
+        )
 
     return ClarificationCardPayload(
         question_fa=question_fa,
@@ -124,29 +151,3 @@ def build_clarification_card(
         options=options,
         questions=questions,
     )
-
-
-def map_clarification_answers_to_deltas(
-    selected_option_id: str | None = None,
-    answers: dict[str, str] | None = None,
-) -> dict[str, float]:
-    """Translate 1-tap clarification pill or form answers into unconstrained weight deltas."""
-    deltas: dict[str, float] = {}
-    if selected_option_id == "opt_fastest":
-        deltas.update({"w_distance": 0.95, "w_open_now": 0.92, "w_price": 0.35})
-    elif selected_option_id == "opt_cheapest":
-        deltas.update({"w_price": 0.96, "w_distance": 0.25})
-    elif selected_option_id == "opt_installment_warranty":
-        deltas.update({"w_installment": 0.95, "w_warranty": 0.90, "w_verified_shop": 0.85})
-
-    for ans in (answers or {}).values():
-        if "نزدیک" in ans or "الان" in ans:
-            deltas.update({"w_distance": 0.95, "w_open_now": 0.92})
-        if "ارزان" in ans or "کف قیمت" in ans or "نقدی" in ans:
-            deltas.update({"w_price": 0.95})
-        if "قسطی" in ans or "ترب‌پی" in ans or "اسنپ‌پی" in ans:
-            deltas.update({"w_installment": 0.95})
-        if "گارانتی" in ans or "رسمی" in ans:
-            deltas.update({"w_warranty": 0.90, "w_verified_shop": 0.85})
-
-    return deltas

@@ -58,41 +58,30 @@ class Settings(BaseSettings):
     redis_profile_ttl_seconds: int = 86400
     redis_qcache_ttl_seconds: int = 300
 
-    # 3. 15-Parameter Adaptive RecSys & Anti-Fatigue Hyperparameters
-    recsys_total_slots: int = 15
-    recsys_base_slots: int = 5
-    recsys_persona_slots: int = 5
-    recsys_dynamic_slots: int = 5
-
-    recsys_default_base_weights_json: str = (
-        '{"w_distance":0.50,"w_price":0.60,"w_score":0.40,"w_open_now":0.50,"w_freshness":0.40}'
-    )
-    recsys_default_persona_weights_json: str = (
-        '{"w_installment":0.30,"w_warranty":0.40,"w_mall_cluster":0.30,"w_verified_shop":0.35,"w_delivery_backup":0.25}'
-    )
+    # 3. Clean Two-Layer Adaptive RecSys (5+1 Store Layer + Category-Agnostic Trait Memory)
+    recsys_total_slots: int = 6
     recsys_default_store_weights_json: str = (
         '{"w_price":0.30,"w_distance":0.30,"w_open_now":0.30,"w_trust_freshness":0.30,"w_installment":0.30}'
     )
 
-    # Two-Stage Jev 5-Criteria & Domain-Scoped Trait Memory Hyperparameters
     recsys_price_decay_ratio: float = 0.15
     recsys_distance_decay_km: float = 8.0
     recsys_mention_score_threshold: float = 0.35
     recsys_unmentioned_tiebreaker_factor: float = 0.10
+    recsys_custom_offer_top_k: int = 15
+    recsys_price_prior_boost_weight: float = 0.12
+
     recsys_trait_cosine_candidate_threshold: float = 0.60
     recsys_trait_jev_same_aspect_noul: float = 0.70
+    recsys_trait_transfer_noul_threshold: float = 0.72
+    recsys_ephemeral_gift_noul_threshold: float = 0.60
     recsys_max_traits_per_query: int = 5
+    recsys_max_stored_traits_per_user: int = 15
+    recsys_max_preferences_per_aspect: int = 2
+    recsys_trait_soft_step: float = 0.15
+    recsys_trait_confirmed_step: float = 0.35
+    recsys_trait_rival_decay: float = 0.92
     recsys_contrastive_feedback_lr: float = 0.15
-
-    recsys_fusion_gamma: float = 0.85
-    recsys_fusion_alpha_min: float = 0.15
-    recsys_fusion_alpha_max: float = 0.95
-    recsys_ema_learning_rate: float = 0.25
-    recsys_dynamic_slot_decay_lambda: float = 0.15
-
-    recsys_dedup_cosine_high_threshold: float = 0.80
-    recsys_dedup_cosine_low_threshold: float = 0.65
-    recsys_dedup_jev_noul_threshold: float = 0.65
 
     recsys_clarify_confidence_threshold: float = 0.45
     recsys_dissatisfied_noul_threshold: float = 0.70
@@ -100,11 +89,7 @@ class Settings(BaseSettings):
 
     recsys_dealbreaker_noul_threshold: float = 0.70
     recsys_hurdle_penalty_multiplier: float = 0.15
-
-    recsys_travel_cost_per_km_toman: int = 15000
-    recsys_travel_coupling_lambda: float = 0.20
     recsys_freshness_half_life_days: float = 14.0
-    recsys_bayesian_prior_votes: int = 10
 
     # 4. Geolocation, Tehran Bounding Box, Retrieval Limits & Server Settings
     default_user_id: str = "usr_tehran_default"
@@ -138,16 +123,6 @@ class Settings(BaseSettings):
     def effective_embedding_api_key(self) -> str:
         """Return EMBEDDING_API_KEY if set, else fall back to LLM_API_KEY."""
         return self.embedding_api_key.strip() or self.llm_api_key
-
-    @property
-    def default_base_weights(self) -> dict[str, float]:
-        """Parse RECSYS_DEFAULT_BASE_WEIGHTS_JSON into a float dict."""
-        return {k: float(v) for k, v in json.loads(self.recsys_default_base_weights_json).items()}
-
-    @property
-    def default_persona_weights(self) -> dict[str, float]:
-        """Parse RECSYS_DEFAULT_PERSONA_WEIGHTS_JSON into a float dict."""
-        return {k: float(v) for k, v in json.loads(self.recsys_default_persona_weights_json).items()}
 
     @property
     def default_store_weights(self) -> dict[str, float]:

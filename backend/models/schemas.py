@@ -176,6 +176,8 @@ class FeedbackRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
     user_id: str = Field(default_factory=lambda: settings.default_user_id, min_length=1)
     feedback_type: Literal["clarification_choice", "thumbs_up", "thumbs_down", "weight_override", "price_discrepancy"]
+    target_offer_id: str | int | None = None
+    target_product_id: str | int | None = None
     selected_option_id: str | None = None
     clarification_answers: dict[str, str] = Field(default_factory=dict)
     weight_overrides: dict[str, float] = Field(default_factory=dict)

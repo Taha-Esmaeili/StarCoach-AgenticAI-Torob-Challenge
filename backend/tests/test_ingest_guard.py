@@ -1,5 +1,6 @@
-"""Phase 2 self-check: dataset guard rules, PostgreSQL + pgvector + pg_trgm counts, Redis caching, and <50ms query benchmark."""
+"""Dataset guard rules, clean schema purge audit, Asia/Tehran open-hours accuracy, and <50ms query benchmark."""
 
+from datetime import datetime, timezone
 import time
 import pytest
 
@@ -13,13 +14,15 @@ from backend.db.normalizer import (
     parse_product_specs,
     parse_warranty,
 )
-from backend.db.postgres import create_pg_pool
+from backend.db.postgres import create_pg_pool, ensure_schema
 from backend.db.profiles import (
-    find_closest_dynamic_slot_pgvector,
+    fetch_user_traits,
+    find_closest_user_aspects_pgvector,
     load_shopping_session,
     load_user_profile,
     save_shopping_session,
     save_user_profile,
+    upsert_user_trait_with_inertia,
 )
 from backend.db.queries import (
     fetch_candidate_offers,
@@ -27,10 +30,10 @@ from backend.db.queries import (
     fetch_product_comparison,
     search_products,
 )
-from backend.db.redis_cache import create_redis_client
+from backend.db.redis_cache import create_redis_client, session_key
 
 
-def test_normalizer_and_mall_extraction_rules():
+def test_normalizer_mall_extraction_and_tehran_timezone_rules():
     assert clean_null_str("null") is None
     assert clean_null_str("  NULL ") is None
     assert normalize_persian_text("گوشی آیفون ۱۶\u200cپرو") == "گوشی ایفون 16 پرو"
@@ -54,18 +57,30 @@ def test_normalizer_and_mall_extraction_rules():
     assert prov == "گارانتی ۱۸ ماهه شرکتی"
     assert months == 18
 
-    is_open, hours_fa = evaluate_weekly_hours(
-        '{"sat":{"status":"declared","shifts":[{"start_time":"10:00:00","end_time":"19:00:00"}]}}'
+    # Bug #10 verification: 2026-10-10 is Saturday (`sat`).
+    # 17:00 UTC == 20:30 Asia/Tehran -> outside 10:00..19:00 shift (must be False, NOT UTC True!)
+    sat_schedule = '{"sat":{"status":"declared","shifts":[{"start_time":"10:00:00","end_time":"19:00:00"}]}}'
+    open_evening_utc, hours_fa = evaluate_weekly_hours(
+        sat_schedule,
+        now_dt=datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc),
     )
-    assert isinstance(is_open, bool)
-    assert len(hours_fa) > 0
+    assert open_evening_utc is False
+    assert "۱۰:۰۰ تا ۱۹:۰۰" in hours_fa
+
+    # 12:00 UTC == 15:30 Asia/Tehran -> inside 10:00..19:00 shift (must be True)
+    open_midday_utc, _ = evaluate_weekly_hours(
+        sat_schedule,
+        now_dt=datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc),
+    )
+    assert open_midday_utc is True
 
 
 @pytest.mark.asyncio
-async def test_postgres_pgvector_redis_dataset_and_sub50ms_queries():
+async def test_postgres_clean_schema_sub50ms_queries_and_durable_persistence():
     pool = await create_pg_pool()
     redis_client = await create_redis_client()
     try:
+        await ensure_schema(pool)
         async with pool.acquire() as conn:
             shops_count = await conn.fetchval("SELECT COUNT(*) FROM shops;")
             real_shops_count = await conn.fetchval("SELECT COUNT(*) FROM shops WHERE is_real_torob_shop = TRUE;")
@@ -73,24 +88,47 @@ async def test_postgres_pgvector_redis_dataset_and_sub50ms_queries():
             products_count = await conn.fetchval("SELECT COUNT(*) FROM products;")
             offers_count = await conn.fetchval("SELECT COUNT(*) FROM offers;")
 
+            has_dyn_table = await conn.fetchval("SELECT to_regclass('public.user_dynamic_slots') IS NOT NULL;")
+            has_prod_emb = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='embedding');"
+            )
+            has_trait_domain = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_trait_memory' AND column_name='domain');"
+            )
+
         assert shops_count == 6476
         assert real_shops_count == 112
         assert mall_shops_count >= 3500
         assert products_count == 225903
         assert offers_count == 331506
+        assert has_dyn_table is False
+        assert has_prod_emb is False
+        assert has_trait_domain is False
 
-        # Verify sub-second product search & Redis cache hit < 50ms
-        prods = await search_products(pool, "دوربین سونی", limit=5, redis_client=redis_client)
+        # Verify sub-second product search (including catalog_search_terms) & Redis cache hit < 50ms
+        prods = await search_products(
+            pool,
+            "دوربین سونی",
+            catalog_search_terms=["سونی", "دیجیتال"],
+            limit=5,
+            redis_client=redis_client,
+        )
         assert len(prods) >= 1
         pid = prods[0]["product_id"]
 
         t0 = time.perf_counter()
-        prods_cached = await search_products(pool, "دوربین سونی", limit=5, redis_client=redis_client)
+        prods_cached = await search_products(
+            pool,
+            "دوربین سونی",
+            catalog_search_terms=["سونی", "دیجیتال"],
+            limit=5,
+            redis_client=redis_client,
+        )
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         assert len(prods_cached) == len(prods)
         assert elapsed_ms < 50.0
 
-        # Verify strict offer stock retrieval (is_category_fallback == False)
+        # Verify strict offer stock retrieval (is_category_fallback == False) + seller_title/description presence
         offers = await fetch_candidate_offers(
             pool,
             [pid],
@@ -102,6 +140,7 @@ async def test_postgres_pgvector_redis_dataset_and_sub50ms_queries():
         assert len(offers) >= 1
         assert offers[0]["is_category_fallback"] is False
         assert offers[0]["price_toman"] > 0
+        assert "seller_title" in offers[0] and "description" in offers[0]
 
         # Verify category fallback when querying a synthetic non-existent product_id
         fallback_offers = await fetch_candidate_offers(
@@ -131,43 +170,51 @@ async def test_postgres_pgvector_redis_dataset_and_sub50ms_queries():
         )
         assert fb_store is None or "alternative_store" in fb_store
 
-        # Verify user_profiles + pgvector dynamic slot cosine similarity (<=>) + Redis session persistence
-        test_uid = "usr_pytest_pgvector"
+        # Verify clean `user_profiles` (`store_weights` + `price_percentiles`) + `user_trait_memory` pgvector cosine
+        test_uid = "usr_pytest_clean_003"
         unit_vec = [1.0] + [0.0] * (settings.embedding_dim - 1)
         prof = await load_user_profile(test_uid, pg_pool=pool, redis_client=redis_client)
-        prof["dynamic_slots"] = [
-            {
-                "slot_id": 11,
-                "feature_key": "spec_anc_mic",
-                "label_fa": "حذف نویز میکروفون",
-                "category_name": "هدفون، هدست و هندزفری",
-                "weight": 0.85,
-                "confidence": 0.90,
-                "embedding": unit_vec,
-                "session_hits": 2,
-            }
-        ]
+        prof["store_weights"]["w_distance"] = 0.82
+        prof["price_percentiles"]["دوربین عکاسی و فیلمبرداری"] = {"pct": 0.68, "n": 3}
         await save_user_profile(prof, pg_pool=pool, redis_client=redis_client)
 
-        matched_slot, cos_sim = await find_closest_dynamic_slot_pgvector(pool, test_uid, unit_vec)
-        assert matched_slot == 11
-        assert cos_sim > 0.99
+        await upsert_user_trait_with_inertia(
+            pg_pool=pool,
+            user_id=test_uid,
+            source_category="دوربین عکاسی و فیلمبرداری",
+            aspect="وزن بدنه",
+            preference="سبک و قابل‌حمل برای سفر",
+            aspect_embedding=unit_vec,
+            alpha=settings.recsys_trait_confirmed_step,
+        )
+        closest = await find_closest_user_aspects_pgvector(pool, test_uid, unit_vec, limit=3)
+        assert len(closest) >= 1
+        assert float(closest[0]["cos_sim"]) > 0.99
 
-        sess = await load_shopping_session(
-            "sess_pytest_01",
-            user_id=test_uid,
-            pg_pool=pool,
-            redis_client=redis_client,
-        )
+        traits = await fetch_user_traits(pool, test_uid)
+        assert any(t["source_category"] == "دوربین عکاسی و فیلمبرداری" for t in traits)
+
+        # Verify durable `session_context_json` recovery in PostgreSQL after Redis eviction
+        sess_id = "sess_pytest_durable_003"
+        sess = await load_shopping_session(sess_id, user_id=test_uid, pg_pool=pool, redis_client=redis_client)
         sess["clarification_count"] = 1
+        sess["product_search_query"] = "دوربین ولاگ سونی"
+        sess["catalog_search_terms"] = ["سونی", "لرزشگیر"]
+        sess["custom_offer_criterion"] = "پاساژ پایتخت"
         await save_shopping_session(sess, pg_pool=pool, redis_client=redis_client)
-        reloaded_sess = await load_shopping_session(
-            "sess_pytest_01",
-            user_id=test_uid,
-            pg_pool=pool,
-            redis_client=redis_client,
-        )
-        assert reloaded_sess["clarification_count"] == 1
+
+        await redis_client.delete(session_key(sess_id))
+        reloaded = await load_shopping_session(sess_id, user_id=test_uid, pg_pool=None, redis_client=redis_client)
+        # Without pg_pool, cache miss creates fresh or memory; now reload strictly from PostgreSQL:
+        from backend.db.profiles import _MEMORY_SESSIONS
+
+        _MEMORY_SESSIONS.pop(sess_id, None)
+        await redis_client.delete(session_key(sess_id))
+        reloaded_pg = await load_shopping_session(sess_id, user_id=test_uid, pg_pool=pool, redis_client=redis_client)
+        assert reloaded_pg["clarification_count"] == 1
+        assert reloaded_pg["product_search_query"] == "دوربین ولاگ سونی"
+        assert reloaded_pg["catalog_search_terms"] == ["سونی", "لرزشگیر"]
+        assert reloaded_pg["custom_offer_criterion"] == "پاساژ پایتخت"
     finally:
         await redis_client.aclose()
         await pool.close()

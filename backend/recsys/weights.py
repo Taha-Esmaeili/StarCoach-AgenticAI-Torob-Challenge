@@ -1,35 +1,29 @@
-"""5-Criteria Sparse Override Weight Manager & Contrastive Revealed-Preference Learner.
+"""5+1 Store Weight Manager, Sparse Override Fusion, Contrastive Store Learner & Open-Category Price Priors.
 
-Implements the Two-Stage Jev Store Weight Architecture (`specs/002-jev-domain-recsys/`):
-1. Layer 1 (Database / Redis Storage): 5 orthogonal store weights in `[0.10, 1.00]^5`
-   (`w_price`, `w_distance`, `w_open_now`, `w_trust_freshness`, `w_installment`), updated ONLY
-   from UI feedback (never mutated by emergency chat text).
-2. Sparse Override Fusion:
-   - If the user mentions at least 1 criterion in chat (`score >= 0.35`), mentioned criteria receive
-     their direct `Jev` score `s_k(q)` while unmentioned criteria receive a bounded tie-breaker
-     `min(0.04, 0.10 * p_k(u))` so a single explicit priority achieves `>= 80%` normalized weight (`SC-001`).
-   - If no store criterion is mentioned in chat, stored user weights `p_k(u)` are used directly.
-3. Layer 2 (Query-Time Ranking): L1 Simplex Normalization `sum_{k=1..5} w_hat_k(u, q) = 1.0`.
+Implements Layer-2 Store Weights & Consolidation (`specs/003-clean-adaptive-recsys/`):
+1. Persistent Profile (`user_profiles.store_weights_json`): 5 orthogonal numerical store criteria in `[0.10, 1.00]^5`
+   (`w_price`, `w_distance`, `w_open_now`, `w_trust_freshness`, `w_installment`), updated ONLY from positive UI
+   selections (`thumbs_up` / store selection) or explicit slider overrides (`weight_override`).
+2. Conditional 6th Slot (`w_offer_custom`): Activated dynamically in-session when the shopper expresses an
+   unstructured store/mall/offer condition (`custom_offer_criterion`).
+3. Sparse Override Fusion + L1 Simplex Normalization (`sum_k w_hat_k = 1.0`) strictly honoring
+   `settings.recsys_mention_score_threshold` (`0.35`) with zero hardcoded overrides.
 """
 
+import math
 from typing import Any
 
 from backend.config import settings
 from backend.models.schemas import ActiveWeightSlot
-from backend.recsys.jev_engine import STORE_CRITERIA_CATALOG, ScoreJudgment
+from backend.recsys.jev_engine import (
+    CUSTOM_OFFER_SLOT_META,
+    STORE_CRITERIA_CATALOG,
+    ScoreJudgment,
+)
 
 
 def clip(val: float, low: float, high: float) -> float:
     return max(low, min(high, val))
-
-
-def compute_fusion_alpha(confidence: float) -> float:
-    """Backward-compatible precision gate helper."""
-    return clip(
-        settings.recsys_fusion_gamma * confidence,
-        settings.recsys_fusion_alpha_min,
-        settings.recsys_fusion_alpha_max,
-    )
 
 
 def l1_normalize_weights(raw_weights: dict[str, float]) -> dict[str, float]:
@@ -43,66 +37,41 @@ def l1_normalize_weights(raw_weights: dict[str, float]) -> dict[str, float]:
 
 
 def _resolve_prior_store_weights(user_profile: dict[str, Any]) -> dict[str, float]:
-    """Extract the 5 canonical store weights from `user_profile` with backward-compatible key mapping."""
+    """Extract the 5 canonical store weights from `user_profile["store_weights"]`."""
     defaults = settings.default_store_weights
-    base_stored = user_profile.get("base_weights") or {}
-    persona_stored = user_profile.get("persona_weights") or {}
-
-    w_trust = base_stored.get(
-        "w_trust_freshness",
-        base_stored.get("w_freshness", base_stored.get("w_score", persona_stored.get("w_warranty", defaults["w_trust_freshness"]))),
-    )
-    w_inst = base_stored.get(
-        "w_installment",
-        persona_stored.get("w_installment", defaults["w_installment"]),
-    )
-
+    stored = user_profile.get("store_weights") or {}
     return {
-        "w_price": float(base_stored.get("w_price", defaults["w_price"])),
-        "w_distance": float(base_stored.get("w_distance", defaults["w_distance"])),
-        "w_open_now": float(base_stored.get("w_open_now", defaults["w_open_now"])),
-        "w_trust_freshness": float(w_trust),
-        "w_installment": float(w_inst),
+        key: clip(float(stored.get(key, defaults[key])), 0.10, 1.00)
+        for key in STORE_CRITERIA_CATALOG
     }
-
-
-def _resolve_session_judgment(
-    key: str,
-    session_judgments: dict[str, ScoreJudgment],
-) -> ScoreJudgment | None:
-    """Resolve canonical 5-criteria session judgment, folding legacy aliases into `w_trust_freshness`."""
-    if key in session_judgments:
-        return session_judgments[key]
-    if key == "w_trust_freshness":
-        aliases = [
-            session_judgments[a]
-            for a in ("w_warranty", "w_verified_shop", "w_freshness", "w_score")
-            if a in session_judgments
-        ]
-        if aliases:
-            return max(aliases, key=lambda j: j.score)
-    return None
 
 
 def fuse_and_normalize_weights(
     user_profile: dict[str, Any],
     session_judgments: dict[str, ScoreJudgment],
+    include_custom_offer: bool = False,
+    custom_offer_label_fa: str | None = None,
 ) -> tuple[list[ActiveWeightSlot], dict[str, float], float]:
-    """Combine stored 5-criteria store weights with current turn Jev 3-level judgments via Sparse Override.
+    """Combine stored 5-criteria store weights (+ optional 6th `w_offer_custom`) with turn judgments via Sparse Override.
 
     Returns `(active_weight_slots, l1_weights_map, mean_effective_confidence)`.
     """
     prior_weights = _resolve_prior_store_weights(user_profile)
-    mention_thresh = min(float(settings.recsys_mention_score_threshold), 0.18)
-    tiebreaker_factor = settings.recsys_unmentioned_tiebreaker_factor
+    mention_thresh = float(settings.recsys_mention_score_threshold)
+    tiebreaker_factor = float(settings.recsys_unmentioned_tiebreaker_factor)
 
-    resolved_judgments: dict[str, ScoreJudgment | None] = {
-        key: _resolve_session_judgment(key, session_judgments) for key in STORE_CRITERIA_CATALOG
-    }
+    active_catalog: dict[str, dict[str, Any]] = dict(STORE_CRITERIA_CATALOG)
+    if include_custom_offer:
+        active_catalog["w_offer_custom"] = {
+            "slot": int(CUSTOM_OFFER_SLOT_META["slot"]),
+            "group": "dynamic",
+            "label_fa": custom_offer_label_fa or str(CUSTOM_OFFER_SLOT_META["label_fa"]),
+        }
+
     mentioned_keys = [
         key
-        for key, j in resolved_judgments.items()
-        if j is not None and j.score >= mention_thresh
+        for key in active_catalog
+        if key in session_judgments and session_judgments[key].score >= mention_thresh
     ]
     has_any_mention = len(mentioned_keys) > 0
 
@@ -110,25 +79,23 @@ def fuse_and_normalize_weights(
     confidences: dict[str, float] = {}
     slot_meta: list[dict[str, Any]] = []
 
-    for key, meta in STORE_CRITERIA_CATALOG.items():
+    for key, meta in active_catalog.items():
         slot_num = int(meta["slot"])
-        prior_w = clip(prior_weights.get(key, 0.30), 0.10, 1.00)
-        judgment = resolved_judgments.get(key)
+        slot_group = str(meta.get("group") or "base")
+        prior_w = prior_weights.get(key, 0.30)
+        judgment = session_judgments.get(key)
         base_conf = judgment.confidence if judgment is not None else 0.50
 
         if has_any_mention:
             if key in mentioned_keys and judgment is not None:
-                # Active session priority directly overrides prior
                 w_val = clip(judgment.score, 0.10, 1.00)
                 eff_conf = max(base_conf, 0.85)
             else:
-                # Unmentioned criterion gets only a small tie-breaker so mentioned criteria are never diluted
                 w_val = min(0.035, tiebreaker_factor * prior_w)
                 eff_conf = base_conf
         else:
-            # No store criterion mentioned in chat -> fall back to user's behavioral prior
             w_val = prior_w
-            eff_conf = max(base_conf, 0.55 if user_profile.get("interaction_count", 0) > 0 else base_conf)
+            eff_conf = max(base_conf, 0.55 if int(user_profile.get("interaction_count", 0)) > 0 else base_conf)
 
         raw_weights[key] = w_val
         confidences[key] = clip(eff_conf, 0.0, 1.0)
@@ -136,8 +103,8 @@ def fuse_and_normalize_weights(
             {
                 "slot": slot_num,
                 "key": key,
-                "label_fa": meta["label_fa"],
-                "slot_group": "base",
+                "label_fa": str(meta["label_fa"]),
+                "slot_group": slot_group if slot_group in ("base", "persona", "dynamic") else "base",
                 "unconstrained_weight": w_val,
                 "confidence": confidences[key],
             }
@@ -153,7 +120,7 @@ def fuse_and_normalize_weights(
                 slot=item["slot"],
                 key=k,
                 label_fa=item["label_fa"],
-                slot_group="base",
+                slot_group=item["slot_group"],
                 weight=round(l1_map[k], 6),
                 unconstrained_weight=round(item["unconstrained_weight"], 4),
                 confidence=round(item["confidence"], 4),
@@ -175,17 +142,13 @@ def update_store_weights_contrastive(
     shown_features_list: list[dict[str, float]] | None = None,
     explicit_deltas: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Update user's 5 store criteria weights from real UI actions (revealed preference).
+    """Update user's 5 persistent store criteria weights strictly from revealed UI selections or slider overrides.
 
-    Applies contrastive debiasing:
-    `p_k(u) <- clip(p_k(u) + lr * (f_selected_k - mean_shown_k), 0.10, 1.00)`
-    so features shared across all displayed stores do not create an echo chamber.
+    Contrastive update:
+    `p_{u,k} <- clip(p_{u,k} + lr * (f_{o*,k} - mean_{o in S} f_{o,k}), 0.10, 1.00)`
     """
-    lr = settings.recsys_contrastive_feedback_lr
-    base_w = dict(settings.default_base_weights)
-    base_w.update(user_profile.get("base_weights") or {})
-    persona_w = dict(settings.default_persona_weights)
-    persona_w.update(user_profile.get("persona_weights") or {})
+    lr = float(settings.recsys_contrastive_feedback_lr)
+    sw = _resolve_prior_store_weights(user_profile)
 
     shown_list = shown_feature_list or shown_features_list
     if selected_features and shown_list:
@@ -198,63 +161,37 @@ def update_store_weights_contrastive(
                     sum(float(f.get(key, f.get(f_key, 0.5))) for f in shown_list) / float(n_shown)
                 )
                 diff = float(sel_val) - mean_shown
-                cur = float(base_w.get(key, 0.30))
-                base_w[key] = round(clip(cur + lr * diff, 0.10, 1.00), 4)
+                sw[key] = round(clip(sw[key] + lr * diff, 0.10, 1.00), 4)
 
     if explicit_deltas:
         for key, target_val in explicit_deltas.items():
-            clamped = round(clip(float(target_val), 0.0, 1.0), 4)
-            base_w[key] = clamped
-            if key in persona_w:
-                persona_w[key] = clamped
-            if key in ("w_warranty", "w_verified_shop", "w_freshness", "w_score"):
-                base_w["w_trust_freshness"] = clamped
+            if key in STORE_CRITERIA_CATALOG:
+                sw[key] = round(clip(float(target_val), 0.10, 1.00), 4)
 
-    user_profile["base_weights"] = base_w
-    user_profile["persona_weights"] = persona_w
+    user_profile["store_weights"] = sw
     user_profile["interaction_count"] = int(user_profile.get("interaction_count", 0)) + 1
     return user_profile
 
 
-def update_profile_ema_unconstrained(
+def update_category_price_percentile(
     user_profile: dict[str, Any],
-    session_judgments: dict[str, ScoreJudgment] | None = None,
-    explicit_deltas: dict[str, float] | None = None,
+    category_name: str,
+    observed_percentile: float,
 ) -> dict[str, Any]:
-    """Backward-compatible profile updater used by explicit feedback and legacy unit tests."""
-    eta = settings.recsys_ema_learning_rate
-    base_w = dict(settings.default_base_weights)
-    base_w.update(user_profile.get("base_weights") or {})
-
-    persona_w = dict(settings.default_persona_weights)
-    persona_w.update(user_profile.get("persona_weights") or {})
-
-    if session_judgments:
-        active_thresh = min(float(settings.recsys_mention_score_threshold), 0.18)
-        for key, judgment in session_judgments.items():
-            if judgment.score < active_thresh:
-                # Unmentioned criteria (Level 0) MUST NOT overwrite or decay stored user weights!
-                continue
-            step = max(eta * judgment.confidence, 0.65)
-            if key in base_w:
-                base_w[key] = round(clip((1.0 - step) * base_w[key] + step * judgment.score, 0.0, 1.0), 4)
-            elif key in persona_w:
-                persona_w[key] = round(clip((1.0 - step) * persona_w[key] + step * judgment.score, 0.0, 1.0), 4)
-
-    if explicit_deltas:
-        for key, target_val in explicit_deltas.items():
-            clamped = round(clip(float(target_val), 0.0, 1.0), 4)
-            if key in base_w or key in STORE_CRITERIA_CATALOG:
-                base_w[key] = clamped
-            if key in persona_w:
-                persona_w[key] = clamped
-            if key in ("w_warranty", "w_verified_shop", "w_freshness", "w_score"):
-                base_w["w_trust_freshness"] = clamped
-            for dyn in user_profile.get("dynamic_slots", []):
-                if dyn.get("feature_key") == key:
-                    dyn["weight"] = clamped
-
-    user_profile["base_weights"] = base_w
-    user_profile["persona_weights"] = persona_w
-    user_profile["interaction_count"] = int(user_profile.get("interaction_count", 0)) + 1
+    """Update open-category spending percentile prior `pi_{u,c} in [0.0, 1.0]` with `eta = 0.30 / sqrt(1 + n)`."""
+    cat = (category_name or "").strip()
+    if not cat:
+        return user_profile
+    obs = clip(float(observed_percentile), 0.0, 1.0)
+    priors = dict(user_profile.get("price_percentiles") or {})
+    entry = priors.get(cat) if isinstance(priors.get(cat), dict) else None
+    if entry is None:
+        priors[cat] = {"pct": round(obs, 4), "n": 1}
+    else:
+        n_prev = max(0, int(entry.get("n", 0)))
+        old_pct = clip(float(entry.get("pct", 0.5)), 0.0, 1.0)
+        eta = 0.30 / math.sqrt(1.0 + float(n_prev))
+        new_pct = (1.0 - eta) * old_pct + eta * obs
+        priors[cat] = {"pct": round(clip(new_pct, 0.0, 1.0), 4), "n": n_prev + 1}
+    user_profile["price_percentiles"] = priors
     return user_profile

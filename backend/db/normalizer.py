@@ -4,6 +4,9 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 # Character translation table: Arabic Yeh/Kaf & Eastern/Persian digits -> normalized Persian + ASCII digits
 _CHAR_MAP = str.maketrans(
@@ -192,26 +195,111 @@ def parse_product_specs(specs_raw: str | None) -> dict[str, str]:
     return result
 
 
+def canonicalize_spec_map(specs: dict[str, Any] | None) -> dict[str, str]:
+    """Normalize ZWNJ/whitespace and merge synonymous display keys in product comparison tables."""
+    if not specs:
+        return {}
+    out: dict[str, str] = {}
+    for raw_k, raw_v in specs.items():
+        val = clean_null_str(str(raw_v or ""))
+        if not val:
+            continue
+        clean_k = _MULTI_SPACE_RE.sub(" ", str(raw_k or "").replace("\u200c", " ")).strip(" :،-")
+        if not clean_k:
+            continue
+        norm_k = normalize_persian_text(clean_k)
+        if norm_k in ("ظرفیت رم", "مقدار ram", "حافظه رم", "حافظه ram", "رم", "ram"):
+            canon = "ظرفیت رم"
+        elif norm_k in ("تراشه", "پردازنده", "پردازنده مرکزی", "مدل پردازنده", "چیپست", "cpu"):
+            canon = "پردازنده / تراشه"
+        elif norm_k in ("حافظه داخلی", "ظرفیت حافظه داخلی", "ظرفیت حافظه", "حافظه خشک", "ظرفیت ssd"):
+            canon = "حافظه داخلی"
+        elif norm_k in ("اندازه صفحه نمایش", "سایز صفحه نمایش", "صفحه نمایش"):
+            canon = "صفحه نمایش"
+        elif norm_k in ("brand", "برند"):
+            canon = "برند"
+        else:
+            canon = clean_k
+        if canon not in out:
+            out[canon] = val
+    return out
+
+
+_NON_WARRANTY_MARKERS = (
+    "بدون گارانتی",
+    "فاقد گارانتی",
+    "ندارد",
+    "دست دوم",
+    "استوک",
+    "کارکرده",
+    "ویترینی",
+    "مشابه اصل",
+    "های کپی",
+    "طرح اصلی",
+)
+
+_TEST_ONLY_MARKERS = (
+    "مهلت تست",
+    "تحویل در حضور",
+    "اصالت و سلامت",
+    "اصالت کالا",
+    "سلامت فیزیکی",
+    "بازگشت کالا",
+    "بازگشت وجه",
+    "ضمانت تعویض",
+    "ضمانت 7 روز",
+    "ضمانت ۷ روز",
+    "7 روز",
+    "۷ روز",
+)
+
+
 def parse_warranty(warranty_raw: str | None) -> tuple[bool, str | None, int | None]:
     """Parse `offers.warranty` (JSON or plain Persian string) into `(has_official_warranty, provider, months)`."""
     cleaned = clean_null_str(warranty_raw)
     if not cleaned:
         return False, None, None
-    if "بدون گارانتی" in cleaned or "فاقد گارانتی" in cleaned:
-        return False, "بدون گارانتی", 0
+
+    desc: str | None = None
+    prov: str | None = None
+    months: int | None = None
     if cleaned.startswith("{"):
         data = safe_json_loads(cleaned, {})
         if isinstance(data, dict):
             desc = clean_null_str(str(data.get("description") or ""))
             prov = clean_null_str(str(data.get("provider") or ""))
             months_val = data.get("period_months")
-            months = int(months_val) if isinstance(months_val, (int, float)) else None
-            label = desc or prov
-            if label and "بدون گارانتی" in label:
-                return False, "بدون گارانتی", 0
-            has_warranty = bool(label or (months and months > 0))
-            return has_warranty, label, months
-    return True, cleaned, None
+            months = int(months_val) if isinstance(months_val, (int, float)) and int(months_val) > 0 else None
+    else:
+        desc = cleaned
+
+    raw_label = desc or prov
+    if not raw_label and not months:
+        return False, None, None
+
+    norm_check = normalize_persian_text(f"{desc or ''} {prov or ''}")
+    if any(normalize_persian_text(m) in norm_check for m in _NON_WARRANTY_MARKERS):
+        return False, None, 0
+
+    has_duration_or_corp = bool(
+        (months and months > 0)
+        or any(tok in norm_check for tok in ("شرکتی", "ماهه", "ماه ", "ساله", "سال "))
+    )
+    if not has_duration_or_corp and any(normalize_persian_text(m) in norm_check for m in _TEST_ONLY_MARKERS):
+        return False, None, 0
+
+    if desc:
+        label = desc
+    elif prov and months:
+        label = f"گارانتی {to_persian_digits(months)} ماهه {prov}"
+    elif prov:
+        label = f"گارانتی {prov}" if "گارانتی" not in prov else prov
+    elif months:
+        label = f"گارانتی {to_persian_digits(months)} ماهه"
+    else:
+        return False, None, None
+
+    return True, label, months
 
 
 _WEEKDAY_MAP = {
@@ -236,7 +324,9 @@ def evaluate_weekly_hours(
         return True, "۱۰:۰۰ تا ۲۱:۰۰ (ساعت کاری معمول)"
 
     if now_dt is None:
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(_TEHRAN_TZ)
+    elif now_dt.tzinfo is not None:
+        now_dt = now_dt.astimezone(_TEHRAN_TZ)
     day_key = _WEEKDAY_MAP.get(now_dt.weekday(), "sat")
     day_info = weekly_hours.get(day_key)
     if not isinstance(day_info, dict):
@@ -263,9 +353,7 @@ def evaluate_weekly_hours(
 
     if not shift_labels:
         return False, "امروز تعطیل"
-    # During hackathon testing outside business hours, if shift is declared valid (e.g. 10:00-19:00),
-    # report the exact declared shift and mark open if within shift or if shifts are declared on weekdays
-    return (is_open or status == "declared"), " / ".join(shift_labels)
+    return is_open, " / ".join(shift_labels)
 
 
 def format_freshness_badge(last_price_changed_at: str | datetime | None) -> tuple[str, float]:

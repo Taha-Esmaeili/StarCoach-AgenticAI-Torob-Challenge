@@ -1,4 +1,4 @@
-"""Write-through persistence for `user_profiles`, `user_dynamic_slots` (`pgvector`), and `shopping_sessions`."""
+"""Write-through persistence for `user_profiles`, category-agnostic `user_trait_memory` (`pgvector`), and `shopping_sessions`."""
 
 import json
 from typing import Any
@@ -7,6 +7,7 @@ import asyncpg
 import redis.asyncio as aioredis
 
 from backend.config import settings
+from backend.db.normalizer import normalize_persian_text
 from backend.db.redis_cache import (
     get_cached_json,
     profile_key,
@@ -14,19 +15,43 @@ from backend.db.redis_cache import (
     set_cached_json,
 )
 
-# In-memory fallback store used when Redis/PostgreSQL are not passed in isolated unit tests
+# In-memory fallback stores used when Redis/PostgreSQL are omitted in isolated unit tests
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
 _MEMORY_SESSIONS: dict[str, dict[str, Any]] = {}
-_MEMORY_TRAITS: dict[tuple[str, str], list[dict[str, Any]]] = {}
+_MEMORY_TRAITS: dict[str, list[dict[str, Any]]] = {}
+
+SESSION_CONTEXT_KEYS = (
+    "last_query",
+    "product_search_query",
+    "catalog_search_terms",
+    "category_keywords",
+    "is_accessory_request",
+    "wants_used_or_stock",
+    "is_ephemeral_or_gift",
+    "custom_offer_criterion",
+    "clarification_questions",
+    "active_session_traits",
+    "transferred_traits",
+    "price_tier",
+    "min_price_toman",
+    "max_price_toman",
+    "max_distance_km",
+    "require_torob_pay",
+    "rejected_offer_ids",
+    "rejected_shop_ids",
+    "rejected_product_ids",
+    "category_price_span",
+    "session_weights",
+    "shown_store_features",
+)
 
 
 def build_default_profile(user_id: str) -> dict[str, Any]:
-    """Construct a fresh 15-slot unconstrained user profile from `.env` defaults."""
+    """Construct a fresh 5-criteria store profile + open-category price priors from `.env` defaults."""
     return {
         "user_id": user_id,
-        "base_weights": dict(settings.default_base_weights),
-        "persona_weights": dict(settings.default_persona_weights),
-        "dynamic_slots": [],
+        "store_weights": dict(settings.default_store_weights),
+        "price_percentiles": {},
         "interaction_count": 0,
     }
 
@@ -37,7 +62,7 @@ def build_default_session(
     lat: float | None = None,
     lng: float | None = None,
 ) -> dict[str, Any]:
-    """Construct a fresh shopping session with anti-fatigue `clarification_count = 0`."""
+    """Construct a fresh shopping session with full durable context defaults."""
     return {
         "session_id": session_id,
         "user_id": user_id or settings.default_user_id,
@@ -46,6 +71,27 @@ def build_default_session(
         "active_category_name": None,
         "selected_product_id": None,
         "last_query": "",
+        "product_search_query": "",
+        "catalog_search_terms": [],
+        "category_keywords": [],
+        "is_accessory_request": False,
+        "wants_used_or_stock": False,
+        "is_ephemeral_or_gift": False,
+        "custom_offer_criterion": "",
+        "clarification_questions": [],
+        "active_session_traits": [],
+        "transferred_traits": [],
+        "price_tier": "mid",
+        "min_price_toman": None,
+        "max_price_toman": None,
+        "max_distance_km": None,
+        "require_torob_pay": False,
+        "rejected_offer_ids": [],
+        "rejected_shop_ids": [],
+        "rejected_product_ids": [],
+        "category_price_span": {},
+        "session_weights": {},
+        "shown_store_features": {},
         "effective_weights": {},
         "hard_constraints": {
             "require_open_now": False,
@@ -63,38 +109,39 @@ async def load_user_profile(
     pg_pool: asyncpg.Pool | None = None,
     redis_client: aioredis.Redis | None = None,
 ) -> dict[str, Any]:
-    """Load user's 15-slot profile via Redis read-through cache -> PostgreSQL (`user_profiles` + `user_dynamic_slots`)."""
+    """Load user's store weights & open-category price percentiles via Redis -> PostgreSQL."""
     r_key = profile_key(user_id)
     cached = await get_cached_json(redis_client, r_key)
-    if isinstance(cached, dict) and "base_weights" in cached:
+    if isinstance(cached, dict) and "store_weights" in cached:
+        cached.setdefault("price_percentiles", {})
         return cached
 
     if pg_pool is not None:
         try:
             async with pg_pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT base_weights_json, persona_weights_json, interaction_count FROM user_profiles WHERE user_id = $1",
+                    "SELECT store_weights_json, price_percentiles_json, interaction_count FROM user_profiles WHERE user_id = $1",
                     user_id,
                 )
                 if row is not None:
-                    dyn_rows = await conn.fetch(
-                        """
-                        SELECT slot_id, feature_key, label_fa, category_name, weight, confidence, session_hits
-                        FROM user_dynamic_slots
-                        WHERE user_id = $1
-                        ORDER BY slot_id ASC
-                        """,
-                        user_id,
+                    raw_sw = (
+                        json.loads(row["store_weights_json"])
+                        if isinstance(row["store_weights_json"], str)
+                        else dict(row["store_weights_json"] or {})
+                    )
+                    sw = dict(settings.default_store_weights)
+                    for k in sw:
+                        if k in raw_sw:
+                            sw[k] = float(raw_sw[k])
+                    raw_pp = (
+                        json.loads(row["price_percentiles_json"])
+                        if isinstance(row["price_percentiles_json"], str)
+                        else dict(row["price_percentiles_json"] or {})
                     )
                     profile = {
                         "user_id": user_id,
-                        "base_weights": json.loads(row["base_weights_json"])
-                        if isinstance(row["base_weights_json"], str)
-                        else dict(row["base_weights_json"]),
-                        "persona_weights": json.loads(row["persona_weights_json"])
-                        if isinstance(row["persona_weights_json"], str)
-                        else dict(row["persona_weights_json"]),
-                        "dynamic_slots": [dict(r) for r in dyn_rows],
+                        "store_weights": sw,
+                        "price_percentiles": raw_pp,
                         "interaction_count": int(row["interaction_count"] or 0),
                     }
                     await set_cached_json(redis_client, r_key, profile, settings.redis_profile_ttl_seconds)
@@ -102,7 +149,7 @@ async def load_user_profile(
         except Exception:
             pass
 
-    if user_id in _MEMORY_PROFILES:
+    if user_id in _MEMORY_PROFILES and "store_weights" in _MEMORY_PROFILES[user_id]:
         return _MEMORY_PROFILES[user_id]
 
     fresh = build_default_profile(user_id)
@@ -115,218 +162,116 @@ async def save_user_profile(
     pg_pool: asyncpg.Pool | None = None,
     redis_client: aioredis.Redis | None = None,
 ) -> None:
-    """Write-through save of unconstrained $[0,1]^{15}$ profile to Redis and PostgreSQL."""
+    """Write-through save of unconstrained `store_weights` and `price_percentiles` to Redis and PostgreSQL."""
     user_id = str(profile["user_id"])
-    _MEMORY_PROFILES[user_id] = profile
-    await set_cached_json(redis_client, profile_key(user_id), profile, settings.redis_profile_ttl_seconds)
+    sw = dict(settings.default_store_weights)
+    sw.update({k: float(v) for k, v in (profile.get("store_weights") or {}).items() if k in sw})
+    pp = dict(profile.get("price_percentiles") or {})
+    clean_profile = {
+        "user_id": user_id,
+        "store_weights": sw,
+        "price_percentiles": pp,
+        "interaction_count": int(profile.get("interaction_count", 0)),
+    }
+    _MEMORY_PROFILES[user_id] = clean_profile
+    await set_cached_json(redis_client, profile_key(user_id), clean_profile, settings.redis_profile_ttl_seconds)
 
     if pg_pool is not None:
         try:
             async with pg_pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO user_profiles (user_id, base_weights_json, persona_weights_json, interaction_count, updated_at)
+                    INSERT INTO user_profiles (user_id, store_weights_json, price_percentiles_json, interaction_count, updated_at)
                     VALUES ($1, $2::jsonb, $3::jsonb, $4, NOW())
                     ON CONFLICT (user_id) DO UPDATE SET
-                        base_weights_json = EXCLUDED.base_weights_json,
-                        persona_weights_json = EXCLUDED.persona_weights_json,
+                        store_weights_json = EXCLUDED.store_weights_json,
+                        price_percentiles_json = EXCLUDED.price_percentiles_json,
                         interaction_count = EXCLUDED.interaction_count,
                         updated_at = NOW()
                     """,
                     user_id,
-                    json.dumps(profile.get("base_weights", settings.default_base_weights), ensure_ascii=False),
-                    json.dumps(profile.get("persona_weights", settings.default_persona_weights), ensure_ascii=False),
-                    int(profile.get("interaction_count", 0)),
+                    json.dumps(sw, ensure_ascii=False),
+                    json.dumps(pp, ensure_ascii=False),
+                    clean_profile["interaction_count"],
                 )
-                for slot in profile.get("dynamic_slots", []):
-                    emb = slot.get("embedding")
-                    emb_literal = (
-                        "[" + ",".join(f"{float(x):.6f}" for x in emb) + "]"
-                        if isinstance(emb, list) and len(emb) == settings.embedding_dim
-                        else None
-                    )
-                    if emb_literal:
-                        await conn.execute(
-                            """
-                            INSERT INTO user_dynamic_slots
-                                (user_id, slot_id, feature_key, label_fa, category_name, weight, confidence, embedding, session_hits, updated_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, NOW())
-                            ON CONFLICT (user_id, slot_id) DO UPDATE SET
-                                feature_key = EXCLUDED.feature_key,
-                                label_fa = EXCLUDED.label_fa,
-                                category_name = EXCLUDED.category_name,
-                                weight = EXCLUDED.weight,
-                                confidence = EXCLUDED.confidence,
-                                embedding = EXCLUDED.embedding,
-                                session_hits = EXCLUDED.session_hits,
-                                updated_at = NOW()
-                            """,
-                            user_id,
-                            int(slot["slot_id"]),
-                            str(slot["feature_key"]),
-                            str(slot["label_fa"]),
-                            slot.get("category_name"),
-                            float(slot.get("weight", 0.5)),
-                            float(slot.get("confidence", 0.5)),
-                            emb_literal,
-                            int(slot.get("session_hits", 1)),
-                        )
-                    else:
-                        await conn.execute(
-                            """
-                            INSERT INTO user_dynamic_slots
-                                (user_id, slot_id, feature_key, label_fa, category_name, weight, confidence, session_hits, updated_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                            ON CONFLICT (user_id, slot_id) DO UPDATE SET
-                                feature_key = EXCLUDED.feature_key,
-                                label_fa = EXCLUDED.label_fa,
-                                category_name = EXCLUDED.category_name,
-                                weight = EXCLUDED.weight,
-                                confidence = EXCLUDED.confidence,
-                                session_hits = EXCLUDED.session_hits,
-                                updated_at = NOW()
-                            """,
-                            user_id,
-                            int(slot["slot_id"]),
-                            str(slot["feature_key"]),
-                            str(slot["label_fa"]),
-                            slot.get("category_name"),
-                            float(slot.get("weight", 0.5)),
-                            float(slot.get("confidence", 0.5)),
-                            int(slot.get("session_hits", 1)),
-                        )
         except Exception:
             pass
 
 
-async def find_closest_dynamic_slot_pgvector(
+async def fetch_user_traits(
     pg_pool: asyncpg.Pool | None,
     user_id: str,
-    embedding: list[float],
-) -> tuple[int | None, float]:
-    """Use PostgreSQL `pgvector` `<=>` cosine distance operator to find the closest dynamic slot."""
-    if pg_pool is None or len(embedding) != settings.embedding_dim:
-        return None, 0.0
-    emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in embedding) + "]"
-    try:
-        async with pg_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT slot_id, 1.0 - (embedding <=> $1::vector) AS cos_sim
-                FROM user_dynamic_slots
-                WHERE user_id = $2 AND embedding IS NOT NULL
-                ORDER BY embedding <=> $1::vector ASC
-                LIMIT 1
-                """,
-                emb_literal,
-                user_id,
-            )
-            if row is not None and row["cos_sim"] is not None:
-                return int(row["slot_id"]), float(row["cos_sim"])
-    except Exception:
-        pass
-    return None, 0.0
-
-
-async def fetch_domain_traits_pgvector(
-    pg_pool: asyncpg.Pool | None,
-    user_id: str,
-    domain: str,
-    query_embedding: list[float] | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve top-K specialized traits for `(user_id, domain)` in < 2ms via `pgvector` or memory store."""
-    top_k = limit or settings.recsys_max_traits_per_query
+    """Retrieve top-N category-agnostic traits for `user_id` ordered by `(strength DESC, updated_at DESC)`."""
+    top_n = limit or settings.recsys_max_stored_traits_per_user
     if pg_pool is not None:
         try:
             async with pg_pool.acquire() as conn:
-                if query_embedding and len(query_embedding) == settings.embedding_dim:
-                    emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in query_embedding) + "]"
-                    rows = await conn.fetch(
-                        """
-                        SELECT trait_id, domain, aspect, preference, hit_count,
-                               1.0 - (aspect_embedding <=> $3::vector) AS cos_sim
-                        FROM user_trait_memory
-                        WHERE user_id = $1 AND domain = $2
-                        ORDER BY aspect_embedding <=> $3::vector ASC, updated_at DESC
-                        LIMIT $4
-                        """,
-                        user_id,
-                        domain,
-                        emb_literal,
-                        top_k,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        """
-                        SELECT trait_id, domain, aspect, preference, hit_count, 1.0 AS cos_sim
-                        FROM user_trait_memory
-                        WHERE user_id = $1 AND domain = $2
-                        ORDER BY hit_count DESC, updated_at DESC
-                        LIMIT $3
-                        """,
-                        user_id,
-                        domain,
-                        top_k,
-                    )
+                rows = await conn.fetch(
+                    """
+                    SELECT trait_id, source_category, aspect, preference, strength, hit_count
+                    FROM user_trait_memory
+                    WHERE user_id = $1
+                    ORDER BY strength DESC, updated_at DESC
+                    LIMIT $2
+                    """,
+                    user_id,
+                    top_n,
+                )
                 if rows:
-                    return [dict(r) for r in rows]
+                    return [
+                        {
+                            "trait_id": int(r["trait_id"]),
+                            "source_category": str(r["source_category"] or ""),
+                            "aspect": str(r["aspect"]),
+                            "preference": str(r["preference"]),
+                            "strength": float(r["strength"] or 0.5),
+                            "hit_count": int(r["hit_count"] or 1),
+                        }
+                        for r in rows
+                    ]
         except Exception:
             pass
 
-    mem_items = list(_MEMORY_TRAITS.get((user_id, domain), []))
+    mem_items = list(_MEMORY_TRAITS.get(user_id, []))
     if not mem_items:
         return []
-    if query_embedding:
-        import numpy as np
-
-        q_vec = np.asarray(query_embedding, dtype=np.float64)
-        q_norm = float(np.linalg.norm(q_vec)) or 1.0
-
-        def _score_item(item: dict[str, Any]) -> float:
-            emb = item.get("aspect_embedding")
-            if not emb or len(emb) != len(query_embedding):
-                return 0.0
-            v = np.asarray(emb, dtype=np.float64)
-            denom = q_norm * (float(np.linalg.norm(v)) or 1.0)
-            return float(np.dot(q_vec, v) / denom)
-
-        mem_items.sort(key=_score_item, reverse=True)
+    mem_items.sort(key=lambda it: (float(it.get("strength", 0.5)), int(it.get("trait_id", 0))), reverse=True)
     return [
         {
-            "trait_id": it.get("trait_id", idx + 1),
-            "domain": it["domain"],
-            "aspect": it["aspect"],
-            "preference": it["preference"],
+            "trait_id": int(it.get("trait_id", idx + 1)),
+            "source_category": str(it.get("source_category") or ""),
+            "aspect": str(it["aspect"]),
+            "preference": str(it["preference"]),
+            "strength": float(it.get("strength", 0.5)),
             "hit_count": int(it.get("hit_count", 1)),
         }
-        for idx, it in enumerate(mem_items[:top_k])
+        for idx, it in enumerate(mem_items[:top_n])
     ]
 
 
-async def find_closest_domain_aspects_pgvector(
+async def find_closest_user_aspects_pgvector(
     pg_pool: asyncpg.Pool | None,
     user_id: str,
-    domain: str,
     aspect_embedding: list[float],
-    limit: int = 3,
+    limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Find closest existing `aspect` rows within `(user_id, domain)` for deduplication / polarity update."""
+    """Find closest existing `aspect` rows for `user_id` via `pgvector` cosine similarity."""
     if pg_pool is not None and len(aspect_embedding) == settings.embedding_dim:
         emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in aspect_embedding) + "]"
         try:
             async with pg_pool.acquire() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT trait_id, domain, aspect, preference, hit_count,
-                           1.0 - (aspect_embedding <=> $3::vector) AS cos_sim
+                    SELECT trait_id, source_category, aspect, preference, strength, hit_count,
+                           1.0 - (aspect_embedding <=> $2::vector) AS cos_sim
                     FROM user_trait_memory
-                    WHERE user_id = $1 AND domain = $2 AND aspect_embedding IS NOT NULL
-                    ORDER BY aspect_embedding <=> $3::vector ASC
-                    LIMIT $4
+                    WHERE user_id = $1 AND aspect_embedding IS NOT NULL
+                    ORDER BY aspect_embedding <=> $2::vector ASC
+                    LIMIT $3
                     """,
                     user_id,
-                    domain,
                     emb_literal,
                     limit,
                 )
@@ -335,7 +280,7 @@ async def find_closest_domain_aspects_pgvector(
         except Exception:
             pass
 
-    mem_items = list(_MEMORY_TRAITS.get((user_id, domain), []))
+    mem_items = list(_MEMORY_TRAITS.get(user_id, []))
     if not mem_items:
         return []
     import numpy as np
@@ -349,45 +294,88 @@ async def find_closest_domain_aspects_pgvector(
         if len(emb) == len(aspect_embedding):
             v = np.asarray(emb, dtype=np.float64)
             cos = float(np.dot(a_vec, v) / (a_norm * (float(np.linalg.norm(v)) or 1.0)))
-        scored.append({**it, "trait_id": it.get("trait_id", idx + 1), "cos_sim": cos})
+        scored.append({**it, "trait_id": int(it.get("trait_id", idx + 1)), "cos_sim": cos})
     scored.sort(key=lambda x: x["cos_sim"], reverse=True)
     return scored[:limit]
 
 
-async def save_or_update_domain_trait(
+async def upsert_user_trait_with_inertia(
     pg_pool: asyncpg.Pool | None,
     user_id: str,
-    domain: str,
+    source_category: str,
     aspect: str,
     preference: str,
     aspect_embedding: list[float],
-    matched_trait_id: int | None = None,
+    alpha: float | None = None,
+    matched_aspect_rows: list[dict[str, Any]] | None = None,
+    same_preference_trait_id: int | None = None,
 ) -> dict[str, Any]:
-    """Insert a new `(user_id, domain, aspect, preference)` trait or update `preference` in-place on `matched_trait_id`."""
-    mem_list = _MEMORY_TRAITS.setdefault((user_id, domain), [])
-    updated_record: dict[str, Any] | None = None
+    """Consolidate a user trait with repetition inertia (`strength`) and Top-K per-aspect retention (`K=2`).
 
-    if matched_trait_id is not None:
-        for item in mem_list:
-            if int(item.get("trait_id", -1)) == int(matched_trait_id) or item.get("aspect") == aspect:
-                item["preference"] = preference
-                item["aspect_embedding"] = aspect_embedding
-                item["hit_count"] = int(item.get("hit_count", 1)) + 1
-                updated_record = item
+    - Same preference on an existing aspect: `s <- 1 - (1 - s) * (1 - alpha)`, `hit_count += 1`.
+    - Competing preference on the same aspect: rival rows decay `s <- rival_decay * s`; new row starts at `alpha`;
+      only Top `recsys_max_preferences_per_aspect` (`2`) rows for that aspect are retained.
+    """
+    step_alpha = max(0.05, min(0.95, float(alpha if alpha is not None else settings.recsys_trait_soft_step)))
+    rival_decay = float(settings.recsys_trait_rival_decay)
+    max_per_aspect = max(1, int(settings.recsys_max_preferences_per_aspect))
+    aspect_rows = list(matched_aspect_rows or [])
+    canonical_aspect = str(aspect_rows[0]["aspect"]) if aspect_rows else aspect
+    norm_pref = normalize_persian_text(preference)
+
+    if same_preference_trait_id is None:
+        for r in aspect_rows:
+            if normalize_persian_text(str(r.get("preference") or "")) == norm_pref:
+                same_preference_trait_id = int(r["trait_id"])
                 break
 
-    if updated_record is None:
-        new_id = len(mem_list) + 1
-        updated_record = {
-            "trait_id": new_id,
+    mem_list = _MEMORY_TRAITS.setdefault(user_id, [])
+    aspect_ids = {int(r["trait_id"]) for r in aspect_rows if r.get("trait_id") is not None}
+    for it in mem_list:
+        if normalize_persian_text(str(it.get("aspect") or "")) == normalize_persian_text(canonical_aspect):
+            aspect_ids.add(int(it["trait_id"]))
+            if same_preference_trait_id is None and normalize_persian_text(str(it.get("preference") or "")) == norm_pref:
+                same_preference_trait_id = int(it["trait_id"])
+
+    target_record: dict[str, Any] | None = None
+    for it in mem_list:
+        tid = int(it["trait_id"])
+        if same_preference_trait_id is not None and tid == int(same_preference_trait_id):
+            old_s = float(it.get("strength", 0.50))
+            it["strength"] = round(min(1.0, 1.0 - (1.0 - old_s) * (1.0 - step_alpha)), 4)
+            it["preference"] = preference
+            if source_category:
+                it["source_category"] = source_category
+            it["aspect_embedding"] = aspect_embedding
+            it["hit_count"] = int(it.get("hit_count", 1)) + 1
+            target_record = it
+        elif tid in aspect_ids:
+            it["strength"] = round(max(0.05, rival_decay * float(it.get("strength", 0.50))), 4)
+
+    if target_record is None:
+        next_id = max((int(x.get("trait_id", 0)) for x in mem_list), default=0) + 1
+        target_record = {
+            "trait_id": next_id,
             "user_id": user_id,
-            "domain": domain,
-            "aspect": aspect,
+            "source_category": source_category,
+            "aspect": canonical_aspect,
             "preference": preference,
             "aspect_embedding": aspect_embedding,
+            "strength": round(step_alpha, 4),
             "hit_count": 1,
         }
-        mem_list.append(updated_record)
+        mem_list.append(target_record)
+        aspect_ids.add(next_id)
+
+    # Prune beyond Top-K (`recsys_max_preferences_per_aspect`) on this aspect in memory
+    same_aspect_mem = [it for it in mem_list if int(it["trait_id"]) in aspect_ids]
+    if len(same_aspect_mem) > max_per_aspect:
+        same_aspect_mem.sort(
+            key=lambda it: (float(it.get("strength", 0.0)), int(it["trait_id"]) == int(target_record["trait_id"])),
+            reverse=True,
+        )
+        drop_ids = {int(it["trait_id"]) for it in same_aspect_mem[max_per_aspect:]}
+        _MEMORY_TRAITS[user_id] = [it for it in mem_list if int(it["trait_id"]) not in drop_ids]
 
     if pg_pool is not None and len(aspect_embedding) == settings.embedding_dim:
         emb_literal = "[" + ",".join(f"{float(x):.6f}" for x in aspect_embedding) + "]"
@@ -395,49 +383,102 @@ async def save_or_update_domain_trait(
             async with pg_pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO user_profiles (user_id, base_weights_json, persona_weights_json, interaction_count)
-                    VALUES ($1, $2::jsonb, $3::jsonb, 0)
+                    INSERT INTO user_profiles (user_id, store_weights_json, price_percentiles_json, interaction_count)
+                    VALUES ($1, $2::jsonb, '{}'::jsonb, 0)
                     ON CONFLICT (user_id) DO NOTHING
                     """,
                     user_id,
-                    json.dumps(settings.default_base_weights, ensure_ascii=False),
-                    json.dumps(settings.default_persona_weights, ensure_ascii=False),
+                    json.dumps(settings.default_store_weights, ensure_ascii=False),
                 )
-                if matched_trait_id is not None:
-                    await conn.execute(
+                db_aspect_ids = [int(r["trait_id"]) for r in aspect_rows if r.get("trait_id") is not None]
+                if same_preference_trait_id is not None:
+                    rival_ids = [tid for tid in db_aspect_ids if tid != int(same_preference_trait_id)]
+                    if rival_ids:
+                        await conn.execute(
+                            """
+                            UPDATE user_trait_memory
+                            SET strength = GREATEST(0.05, strength * $1)
+                            WHERE user_id = $2 AND trait_id = ANY($3::bigint[])
+                            """,
+                            rival_decay,
+                            user_id,
+                            rival_ids,
+                        )
+                    row = await conn.fetchrow(
                         """
                         UPDATE user_trait_memory
                         SET preference = $1,
-                            aspect_embedding = $2::vector,
+                            source_category = CASE WHEN $2 <> '' THEN $2 ELSE source_category END,
+                            aspect_embedding = $3::vector,
+                            strength = LEAST(1.0, 1.0 - (1.0 - strength) * (1.0 - $4)),
                             hit_count = hit_count + 1,
                             updated_at = NOW()
-                        WHERE trait_id = $3 AND user_id = $4 AND domain = $5
+                        WHERE trait_id = $5 AND user_id = $6
+                        RETURNING trait_id, strength, hit_count
                         """,
                         preference,
+                        source_category,
                         emb_literal,
-                        int(matched_trait_id),
+                        step_alpha,
+                        int(same_preference_trait_id),
                         user_id,
-                        domain,
                     )
+                    if row is not None:
+                        target_record["trait_id"] = int(row["trait_id"])
+                        target_record["strength"] = float(row["strength"])
+                        target_record["hit_count"] = int(row["hit_count"])
                 else:
+                    if db_aspect_ids:
+                        await conn.execute(
+                            """
+                            UPDATE user_trait_memory
+                            SET strength = GREATEST(0.05, strength * $1)
+                            WHERE user_id = $2 AND trait_id = ANY($3::bigint[])
+                            """,
+                            rival_decay,
+                            user_id,
+                            db_aspect_ids,
+                        )
                     row_id = await conn.fetchval(
                         """
-                        INSERT INTO user_trait_memory (user_id, domain, aspect, preference, aspect_embedding, hit_count, updated_at)
-                        VALUES ($1, $2, $3, $4, $5::vector, 1, NOW())
+                        INSERT INTO user_trait_memory
+                            (user_id, source_category, aspect, preference, aspect_embedding, strength, hit_count, updated_at)
+                        VALUES ($1, $2, $3, $4, $5::vector, $6, 1, NOW())
                         RETURNING trait_id
                         """,
                         user_id,
-                        domain,
-                        aspect,
+                        source_category,
+                        canonical_aspect,
                         preference,
                         emb_literal,
+                        step_alpha,
                     )
                     if row_id is not None:
-                        updated_record["trait_id"] = int(row_id)
+                        target_record["trait_id"] = int(row_id)
+                        db_aspect_ids.append(int(row_id))
+
+                # Enforce Top-K (`max_per_aspect`) retention on this aspect in PostgreSQL
+                if len(db_aspect_ids) > max_per_aspect:
+                    await conn.execute(
+                        """
+                        DELETE FROM user_trait_memory
+                        WHERE user_id = $1
+                          AND trait_id IN (
+                              SELECT trait_id
+                              FROM user_trait_memory
+                              WHERE user_id = $1 AND trait_id = ANY($2::bigint[])
+                              ORDER BY strength DESC, updated_at DESC
+                              OFFSET $3
+                          )
+                        """,
+                        user_id,
+                        db_aspect_ids,
+                        max_per_aspect,
+                    )
         except Exception:
             pass
 
-    return updated_record
+    return target_record
 
 
 async def load_shopping_session(
@@ -448,7 +489,7 @@ async def load_shopping_session(
     pg_pool: asyncpg.Pool | None = None,
     redis_client: aioredis.Redis | None = None,
 ) -> dict[str, Any]:
-    """Load active shopping session from Redis (`< 2 ms`) with PostgreSQL fallback."""
+    """Load active shopping session from Redis (`< 2 ms`) with full PostgreSQL `session_context_json` fallback."""
     s_key = session_key(session_id)
     cached = await get_cached_json(redis_client, s_key)
     if isinstance(cached, dict) and "session_id" in cached:
@@ -466,26 +507,40 @@ async def load_shopping_session(
                     session_id,
                 )
                 if row is not None:
-                    sess = {
-                        "session_id": session_id,
-                        "user_id": row["user_id"],
-                        "user_lat": lat if lat is not None else float(row["user_lat"]),
-                        "user_lng": lng if lng is not None else float(row["user_lng"]),
-                        "active_category_name": row["active_category_name"],
-                        "selected_product_id": row["selected_product_id"],
-                        "last_query": "",
-                        "effective_weights": json.loads(row["effective_weights_json"])
+                    sess = build_default_session(
+                        session_id=session_id,
+                        user_id=row["user_id"],
+                        lat=lat if lat is not None else float(row["user_lat"]),
+                        lng=lng if lng is not None else float(row["user_lng"]),
+                    )
+                    sess["active_category_name"] = row["active_category_name"]
+                    sess["selected_product_id"] = row["selected_product_id"]
+                    sess["effective_weights"] = (
+                        json.loads(row["effective_weights_json"])
                         if isinstance(row["effective_weights_json"], str)
-                        else dict(row["effective_weights_json"]),
-                        "hard_constraints": json.loads(row["hard_constraints_json"])
+                        else dict(row["effective_weights_json"] or {})
+                    )
+                    sess["hard_constraints"] = (
+                        json.loads(row["hard_constraints_json"])
                         if isinstance(row["hard_constraints_json"], str)
-                        else dict(row["hard_constraints_json"]),
-                        "clarification_count": int(row["clarification_count"] or 0),
-                        "dissatisfaction_triggered": bool(row["dissatisfaction_triggered"]),
-                        "messages": json.loads(row["messages_json"])
+                        else dict(row["hard_constraints_json"] or {})
+                    )
+                    ctx_raw = row.get("session_context_json")
+                    ctx = (
+                        json.loads(ctx_raw)
+                        if isinstance(ctx_raw, str)
+                        else dict(ctx_raw or {})
+                    )
+                    for k in SESSION_CONTEXT_KEYS:
+                        if k in ctx:
+                            sess[k] = ctx[k]
+                    sess["clarification_count"] = int(row["clarification_count"] or 0)
+                    sess["dissatisfaction_triggered"] = bool(row["dissatisfaction_triggered"])
+                    sess["messages"] = (
+                        json.loads(row["messages_json"])
                         if isinstance(row["messages_json"], str)
-                        else list(row["messages_json"]),
-                    }
+                        else list(row["messages_json"] or [])
+                    )
                     await set_cached_json(redis_client, s_key, sess, settings.redis_session_ttl_seconds)
                     return sess
         except Exception:
@@ -509,12 +564,13 @@ async def save_shopping_session(
     pg_pool: asyncpg.Pool | None = None,
     redis_client: aioredis.Redis | None = None,
 ) -> None:
-    """Persist shopping session to Redis (`TTL = REDIS_SESSION_TTL_SECONDS`) and PostgreSQL."""
+    """Persist shopping session (including full `session_context_json`) to Redis and PostgreSQL."""
     session_id = str(session["session_id"])
     _MEMORY_SESSIONS[session_id] = session
     await set_cached_json(redis_client, session_key(session_id), session, settings.redis_session_ttl_seconds)
 
     if pg_pool is not None:
+        ctx_payload = {k: session.get(k) for k in SESSION_CONTEXT_KEYS if k in session}
         try:
             async with pg_pool.acquire() as conn:
                 await conn.execute(
@@ -522,9 +578,10 @@ async def save_shopping_session(
                     INSERT INTO shopping_sessions (
                         session_id, user_id, user_lat, user_lng, active_category_name,
                         selected_product_id, effective_weights_json, hard_constraints_json,
-                        clarification_count, dissatisfaction_triggered, messages_json, updated_at
+                        session_context_json, clarification_count, dissatisfaction_triggered,
+                        messages_json, updated_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb, NOW())
+                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12::jsonb, NOW())
                     ON CONFLICT (session_id) DO UPDATE SET
                         user_lat = EXCLUDED.user_lat,
                         user_lng = EXCLUDED.user_lng,
@@ -532,6 +589,7 @@ async def save_shopping_session(
                         selected_product_id = EXCLUDED.selected_product_id,
                         effective_weights_json = EXCLUDED.effective_weights_json,
                         hard_constraints_json = EXCLUDED.hard_constraints_json,
+                        session_context_json = EXCLUDED.session_context_json,
                         clarification_count = EXCLUDED.clarification_count,
                         dissatisfaction_triggered = EXCLUDED.dissatisfaction_triggered,
                         messages_json = EXCLUDED.messages_json,
@@ -545,6 +603,7 @@ async def save_shopping_session(
                     str(session["selected_product_id"]) if session.get("selected_product_id") else None,
                     json.dumps(session.get("effective_weights", {}), ensure_ascii=False),
                     json.dumps(session.get("hard_constraints", {}), ensure_ascii=False),
+                    json.dumps(ctx_payload, ensure_ascii=False),
                     int(session.get("clarification_count", 0)),
                     bool(session.get("dissatisfaction_triggered", False)),
                     json.dumps(session.get("messages", []), ensure_ascii=False),
