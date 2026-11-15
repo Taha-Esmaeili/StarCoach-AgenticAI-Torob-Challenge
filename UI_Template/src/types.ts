@@ -62,13 +62,6 @@ export interface ShopOffer {
   paretoRole?: 'best_overall' | 'closest_open' | 'lowest_price' | 'standard';
   paretoBadge?: string;
   whyThisShop?: string[];
-  verificationCallLog?: {
-    verifiedAt: string;
-    verifiedPrice: number;
-    verifiedStock: boolean;
-    agentSummary: string;
-    transcript: { speaker: string; text: string }[];
-  };
 }
 
 export interface UserLocation {
@@ -77,39 +70,6 @@ export interface UserLocation {
   area: string;
   lat: number;
   lng: number;
-}
-
-export interface RankingWeights {
-  relevance: number;      // تطابق مدل با جستجو
-  distance: number;       // نزدیکی مکانی به کاربر
-  price: number;          // ارزان‌ترین قیمت و تخفیف
-  reputation: number;     // سابقه و رضایت در ترب
-  stockFreshness: number; // تازگی آپدیت قیمت و استعلام موجودی
-  creditSupport: number;  // پشتیبانی ترب‌پی و خرید قسطی
-}
-
-export interface WeightProfile {
-  id: string;
-  title: string;
-  description: string;
-  weights: RankingWeights;
-}
-
-export interface NormalizedScores {
-  relevanceNorm: number;
-  distanceNorm: number;
-  priceNorm: number;
-  reputationNorm: number;
-  stockFreshnessNorm: number;
-  creditSupportNorm: number;
-  totalScore: number;
-}
-
-export interface RankedOffer {
-  offer: ShopOffer;
-  scores: NormalizedScores;
-  rank: number;
-  explanation: string;
 }
 
 export interface FeatureQuestion {
@@ -145,16 +105,6 @@ export interface ChatMessage {
   shopOffers?: ShopOffer[];
   followUpChips?: string[];
   featureClarification?: FeatureClarificationPayload;
-  callSimulation?: {
-    shopId: string;
-    shopName: string;
-    phoneNumber: string;
-    status: 'idle' | 'calling' | 'connected' | 'completed' | 'failed';
-    transcript: { speaker: 'ایجنت ترب' | 'فروشنده مغازه'; text: string; time: string }[];
-    confirmedPrice: number;
-    confirmedStock: boolean;
-    inMallDirections: string;
-  };
 }
 
 export type ActiveTab = 'chat' | 'stores' | 'compare';

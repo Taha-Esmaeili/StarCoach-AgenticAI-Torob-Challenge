@@ -96,18 +96,6 @@ def _compute_feature_vector(
     return feats
 
 
-def compute_hurdle_multiplier(offer: dict[str, Any], hard_constraints: HardConstraintsState) -> float:
-    """Compute Dealbreaker Hurdle Multiplier `Phi(i) in {1.0, RECSYS_HURDLE_PENALTY_MULTIPLIER}`."""
-    penalty = settings.recsys_hurdle_penalty_multiplier
-    if hard_constraints.require_open_now and not offer.get("is_open_now"):
-        return penalty
-    if hard_constraints.require_installment and not offer.get("has_in_person_installment"):
-        return penalty
-    if hard_constraints.require_warranty and not offer.get("has_official_warranty"):
-        return penalty
-    return 1.0
-
-
 def _apply_strict_hard_constraints(
     candidates: list[dict[str, Any]],
     hard_constraints: HardConstraintsState,

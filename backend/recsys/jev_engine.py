@@ -1206,24 +1206,6 @@ async def score_custom_offer_criterion_with_decision_model(
     return annotated
 
 
-async def check_same_aspect_noul(aspect_a: str, aspect_b: str) -> NoulJudgment:
-    """Evaluate strictly via the Decision Model whether `aspect_a` and `aspect_b` share the same attribute axis."""
-    answers = await _call_decision_model(
-        state_payload={"aspect_a": aspect_a, "aspect_b": aspect_b},
-        questions={
-            "same_aspect": {
-                "type": "noul",
-                "instructions": "Do aspect_a and aspect_b refer to the exact same product attribute axis (even if phrased differently)?",
-            }
-        },
-    )
-    ans = answers.get("same_aspect", {}) if isinstance(answers.get("same_aspect"), dict) else {}
-    return NoulJudgment(
-        noul=max(0.0, min(1.0, float(ans.get("noul", 0.0)))),
-        confidence=max(0.0, min(1.0, float(ans.get("confidence", 0.90)))),
-    )
-
-
 async def check_trait_aspect_and_preference_noul(
     new_aspect: str,
     new_preference: str,
