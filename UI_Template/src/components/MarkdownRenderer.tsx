@@ -63,7 +63,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         parts.push(
           <code
             key={`code-${keyIdx++}`}
-            className="px-1.5 py-0.5 rounded bg-[#1e1e28] text-[#ff6688] font-mono text-[11px] border border-[#2c2c3e]"
+            className="px-1.5 py-0.5 rounded bg-[#1e1e28] text-[#ff6688] font-mono text-xs sm:text-[13px] border border-[#2c2c3e]"
           >
             {match[7]}
           </code>
@@ -132,7 +132,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         <ol key={`ol-${elements.length}`} className="my-2 space-y-1.5 pr-2">
           {currentList.items.map((item, idx) => (
             <li key={idx} className="flex items-start gap-2 text-neutral-200">
-              <span className="text-xs font-bold text-[#ff6688] mt-0.5 shrink-0">
+              <span className="text-sm font-bold text-[#ff6688] mt-0.5 shrink-0">
                 {(idx + 1).toLocaleString('fa-IR')}.
               </span>
               <div className="flex-1 leading-relaxed">{renderInline(item)}</div>
@@ -173,7 +173,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       elements.push(
         <blockquote
           key={`bq-${i}`}
-          className="border-r-2 border-[#e9325a] pr-3 my-2 text-neutral-300 italic bg-[#161622]/60 py-1.5 rounded-l text-xs"
+          className="border-r-2 border-[#e9325a] pr-3 my-2 text-neutral-200 italic bg-[#161622]/60 py-2 rounded-l text-[13px] sm:text-sm"
         >
           {renderInline(blockquoteMatch[1])}
         </blockquote>
@@ -216,7 +216,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         elements.push(
           <h2
             key={`h1-${i}`}
-            className="text-sm md:text-base font-black text-white mt-3 mb-1.5 border-b border-[#252536] pb-1"
+            className="text-base md:text-lg font-black text-white mt-3 mb-1.5 border-b border-[#252536] pb-1"
           >
             {renderInline(text)}
           </h2>
@@ -225,7 +225,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         elements.push(
           <h3
             key={`h2-${i}`}
-            className="text-xs md:text-sm font-extrabold text-[#ff6688] mt-2.5 mb-1"
+            className="text-sm md:text-base font-extrabold text-[#ff6688] mt-2.5 mb-1"
           >
             {renderInline(text)}
           </h3>
@@ -234,7 +234,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         elements.push(
           <h4
             key={`h3-${i}`}
-            className="text-xs font-bold text-neutral-100 mt-2 mb-0.5"
+            className="text-sm font-bold text-neutral-100 mt-2 mb-0.5"
           >
             {renderInline(text)}
           </h4>

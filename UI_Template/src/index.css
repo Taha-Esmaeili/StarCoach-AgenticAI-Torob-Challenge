@@ -13,7 +13,11 @@
     color: #f3f4f6;
     direction: rtl;
     text-align: right;
-    letter-spacing: -0.015em;
+    letter-spacing: normal;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   input, button, select, textarea {

@@ -113,12 +113,12 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     const userIcon = L.divIcon({
       className: 'torob-user-pin',
       html: `
-        <div style="display:flex;align-items:center;gap:4px;background:#0284c7;color:#fff;padding:4px 10px;border-radius:999px;font-family:'Vazirmatn',sans-serif;font-size:11px;font-weight:900;border:2px solid #fff;box-shadow:0 4px 14px rgba(2,132,199,0.75);white-space:nowrap;direction:rtl;">
+        <div style="display:flex;align-items:center;gap:4px;background:#0284c7;color:#fff;padding:4px 11px;border-radius:999px;font-family:'Vazirmatn',sans-serif;font-size:12px;font-weight:900;border:2px solid #fff;box-shadow:0 4px 14px rgba(2,132,199,0.75);white-space:nowrap;direction:rtl;">
           <span>📍 مبدا شما (${userLocation.name})</span>
         </div>
       `,
-      iconSize: [140, 28],
-      iconAnchor: [70, 14],
+      iconSize: [155, 30],
+      iconAnchor: [77, 15],
     });
     L.marker([userLocation.lat, userLocation.lng], { icon: userIcon, zIndexOffset: 500 }).addTo(layer);
 
@@ -170,13 +170,13 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       const storeIcon = L.divIcon({
         className: 'torob-store-pin',
         html: `
-          <div style="display:inline-flex;align-items:center;gap:5px;background:${bg};color:#fff;padding:4px 10px;border-radius:12px;font-family:'Vazirmatn',sans-serif;font-size:11px;font-weight:900;border:2px solid ${border};box-shadow:0 4px 14px rgba(0,0,0,0.7);white-space:nowrap;direction:rtl;transform:${isSelected ? 'scale(1.12)' : 'scale(1)'};">
+          <div style="display:inline-flex;align-items:center;gap:5px;background:${bg};color:#fff;padding:4px 11px;border-radius:12px;font-family:'Vazirmatn',sans-serif;font-size:12px;font-weight:900;border:2px solid ${border};box-shadow:0 4px 14px rgba(0,0,0,0.7);white-space:nowrap;direction:rtl;transform:${isSelected ? 'scale(1.12)' : 'scale(1)'};">
             <span style="width:7px;height:7px;border-radius:999px;background:${offer.isOpenNow ? '#10b981' : '#f59e0b'};display:inline-block;"></span>
             <span>${compact ? offer.shopName : priceLabel}</span>
           </div>
         `,
-        iconSize: [compact ? 130 : 92, 30],
-        iconAnchor: [compact ? 65 : 46, 15],
+        iconSize: [compact ? 145 : 102, 32],
+        iconAnchor: [compact ? 72 : 51, 16],
       });
 
       const mallBadgeHtml = [offer.mallName, offer.mallFloor, offer.mallUnit]
@@ -189,11 +189,11 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       }).addTo(layer);
 
       marker.bindPopup(
-        `<div style="direction:rtl;text-align:right;font-family:'Vazirmatn',sans-serif;min-width:200px;color:#111;">
-          <div style="font-weight:900;font-size:12px;margin-bottom:3px;color:#e9325a;">🏪 ${offer.shopName}</div>
-          ${mallBadgeHtml ? `<div style="font-size:10px;font-weight:700;color:#374151;margin-bottom:4px;">🏢 ${mallBadgeHtml}</div>` : ''}
-          <div style="font-size:11px;font-weight:800;margin-bottom:3px;">💰 ${offer.price.toLocaleString('fa-IR')} تومان</div>
-          <div style="font-size:10px;color:#4b5563;">🚗 فاصله: ${offer.distanceKm.toLocaleString('fa-IR')} کیلومتر (~${(offer.estimatedDrivingMins || 10).toLocaleString('fa-IR')} دقیقه)</div>
+        `<div style="direction:rtl;text-align:right;font-family:'Vazirmatn',sans-serif;min-width:210px;color:#111;line-height:1.6;">
+          <div style="font-weight:900;font-size:13px;margin-bottom:3px;color:#e9325a;">🏪 ${offer.shopName}</div>
+          ${mallBadgeHtml ? `<div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;">🏢 ${mallBadgeHtml}</div>` : ''}
+          <div style="font-size:13px;font-weight:800;margin-bottom:3px;">💰 ${offer.price.toLocaleString('fa-IR')} تومان</div>
+          <div style="font-size:12px;color:#4b5563;">🚗 فاصله: ${offer.distanceKm.toLocaleString('fa-IR')} کیلومتر (~${(offer.estimatedDrivingMins || 10).toLocaleString('fa-IR')} دقیقه)</div>
         </div>`
       );
 
@@ -211,7 +211,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
   return (
     <div className="rounded-2xl overflow-hidden border border-[#2c2c3e] bg-[#12121a] shadow-lg">
-      <div className="px-3.5 py-2.5 bg-[#151520] border-b border-[#232332] flex items-center justify-between flex-wrap gap-2 text-xs">
+      <div className="px-3.5 py-2.5 bg-[#151520] border-b border-[#232332] flex items-center justify-between flex-wrap gap-2 text-[13px] sm:text-sm">
         <div className="flex items-center gap-2 font-extrabold text-white">
           <MapPin className="w-4 h-4 text-[#e9325a]" />
           <span>
@@ -220,7 +220,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
               : 'نقشه زنده فروشگاه‌های حضوری تهران (پین قیمت و مسیر)'}
           </span>
         </div>
-        <div className="flex items-center gap-2.5 text-[11px] text-neutral-300">
+        <div className="flex items-center gap-2.5 text-xs sm:text-[13px] text-neutral-300">
           <span className="inline-flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
             <span>باز</span>
@@ -233,15 +233,15 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <button
               type="button"
               onClick={onChangeLocation}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 font-bold cursor-pointer transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 font-bold cursor-pointer transition-colors"
               title="تغییر دستی موقعیت مبدأ روی نقشه"
             >
-              <Navigation className="w-3 h-3" />
+              <Navigation className="w-3.5 h-3.5" />
               <span>مبدا: {userLocation.name} (تغییر)</span>
             </button>
           ) : (
             <span className="inline-flex items-center gap-1 text-sky-400 font-bold">
-              <Navigation className="w-3 h-3" />
+              <Navigation className="w-3.5 h-3.5" />
               <span>مبدا: {userLocation.name}</span>
             </span>
           )}
@@ -250,17 +250,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             onClick={() =>
               setMapStyle((prev) => (prev === 'persian_osm' ? 'dark' : 'persian_osm'))
             }
-            className="px-2.5 py-1 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] border border-[#34344a] text-[10px] font-bold text-white flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="px-2.5 py-1 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] border border-[#34344a] text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer transition-colors"
             title="تغییر ظاهر نقشه (حالت روز / شب)"
           >
             {mapStyle === 'persian_osm' ? (
               <>
-                <Moon className="w-3 h-3 text-[#ff80a0]" />
+                <Moon className="w-3.5 h-3.5 text-[#ff80a0]" />
                 <span>حالت شب</span>
               </>
             ) : (
               <>
-                <Sun className="w-3 h-3 text-amber-400" />
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
                 <span>حالت روز</span>
               </>
             )}

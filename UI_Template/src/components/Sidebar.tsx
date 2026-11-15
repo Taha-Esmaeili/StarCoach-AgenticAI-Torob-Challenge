@@ -70,11 +70,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside
         className={`fixed md:relative inset-y-0 right-0 z-50 h-full bg-[#0d0d12] border-l border-[#1c1c24] flex flex-col justify-between transition-all duration-300 ease-in-out ${
           isOpen
-            ? 'w-72 translate-x-0 opacity-100'
+            ? 'w-80 translate-x-0 opacity-100'
             : 'w-0 -translate-x-full md:translate-x-0 md:w-0 overflow-hidden opacity-0 pointer-events-none border-none'
         }`}
       >
-        <div className="w-72 flex flex-col h-full justify-between">
+        <div className="w-80 flex flex-col h-full justify-between">
           {/* Top: New chat button & close */}
           <div className="p-3.5 border-b border-[#1c1c24] flex items-center gap-2">
             <button
@@ -82,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNewChat();
                 if (window.innerWidth < 768) onClose();
               }}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-[#15151c] hover:bg-[#1e1e27] border border-[#23232c] hover:border-[#e9325a]/50 text-neutral-200 text-xs font-bold transition-all shadow-sm group"
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-[#15151c] hover:bg-[#1e1e27] border border-[#23232c] hover:border-[#e9325a]/50 text-neutral-100 text-sm font-bold transition-all shadow-sm group"
             >
               <Plus className="w-4 h-4 text-[#e9325a] group-hover:scale-110 transition-transform" />
               <span>گفت‌وگوی جدید</span>
@@ -98,16 +98,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           {/* Scrollable Center: History & In-Store Filters */}
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
+          <div className="flex-1 overflow-y-auto px-3 py-3.5 space-y-5">
             {/* Real Saved Conversation History */}
             <div>
-              <div className="text-[11px] font-bold text-neutral-500 px-2 mb-2">تاریخچه گفتگوها</div>
+              <div className="text-xs font-bold text-neutral-400 px-2 mb-2">تاریخچه گفتگوها</div>
               {sessions.length === 0 ? (
-                <div className="px-3 py-3 rounded-xl bg-[#121218] border border-[#1d1d26] text-[11px] text-neutral-500 text-center">
+                <div className="px-3 py-3.5 rounded-xl bg-[#121218] border border-[#1d1d26] text-[13px] text-neutral-400 text-center">
                   هنوز گفتگویی ثبت نشده است
                 </div>
               ) : (
-                <div className="space-y-1 max-h-60 overflow-y-auto pr-0.5">
+                <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
                   {sessions.map((item) => {
                     const isActive = item.sessionId === activeSessionId;
                     return (
@@ -117,14 +117,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           onSelectSession(item.sessionId);
                           if (window.innerWidth < 768) onClose();
                         }}
-                        className={`w-full text-right flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-colors group cursor-pointer ${
+                        className={`w-full text-right flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] sm:text-sm transition-colors group cursor-pointer ${
                           isActive
-                            ? 'bg-[#1b141c] border border-[#e9325a]/40 text-white'
-                            : 'text-neutral-300 hover:bg-[#15151c] hover:text-white border border-transparent'
+                            ? 'bg-[#1b141c] border border-[#e9325a]/40 text-white font-semibold'
+                            : 'text-neutral-200 hover:bg-[#15151c] hover:text-white border border-transparent'
                         }`}
                       >
                         <MessageSquare
-                          className={`w-3.5 h-3.5 shrink-0 ${
+                          className={`w-4 h-4 shrink-0 ${
                             isActive
                               ? 'text-[#ff4d79]'
                               : 'text-neutral-500 group-hover:text-[#ff4d79]'
@@ -142,7 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg text-neutral-500 hover:text-[#ff4d79] hover:bg-white/5 transition-all shrink-0 cursor-pointer"
                           title="حذف گفتگو"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     );
@@ -152,16 +152,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* In-Store Live Shopping Filters */}
-            <div className="pt-3 border-t border-[#1c1c24]">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-neutral-400 px-2 mb-2.5">
-                <Store className="w-3.5 h-3.5 text-[#e9325a]" />
+            <div className="pt-3.5 border-t border-[#1c1c24]">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-300 px-2 mb-2.5">
+                <Store className="w-4 h-4 text-[#e9325a]" />
                 <span>فیلترهای خرید حضوری</span>
               </div>
 
               <div className="space-y-2 px-1">
-                <label className="flex items-center justify-between p-2 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
-                  <span className="flex items-center gap-2 text-xs text-neutral-300">
-                    <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
+                  <span className="flex items-center gap-2 text-[13px] sm:text-sm text-neutral-200">
+                    <Clock className="w-4 h-4 text-emerald-400" />
                     <span>فقط مغازه‌های باز در این لحظه</span>
                   </span>
                   <input
@@ -172,9 +172,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-2 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
-                  <span className="flex items-center gap-2 text-xs text-neutral-300">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#ff4d79]" />
+                <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
+                  <span className="flex items-center gap-2 text-[13px] sm:text-sm text-neutral-200">
+                    <CheckCircle2 className="w-4 h-4 text-[#ff4d79]" />
                     <span>پذیرنده ترب‌پی حضوری</span>
                   </span>
                   <input
@@ -185,9 +185,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-2 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
-                  <span className="flex items-center gap-2 text-xs text-neutral-300">
-                    <CreditCard className="w-3.5 h-3.5 text-neutral-400" />
+                <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#14141a] border border-[#202028] cursor-pointer hover:border-[#2d2d38] transition-colors">
+                  <span className="flex items-center gap-2 text-[13px] sm:text-sm text-neutral-200">
+                    <CreditCard className="w-4 h-4 text-neutral-400" />
                     <span>خرید اقساطی / اسنپ‌پی</span>
                   </span>
                   <input
@@ -202,28 +202,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Live 5+1 Adaptive Store RecSys Weights */}
             {activeWeights && activeWeights.length > 0 && (
-              <div className="pt-3 border-t border-[#1c1c24]">
-                <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 px-2 mb-2">
+              <div className="pt-3.5 border-t border-[#1c1c24]">
+                <div className="flex items-center justify-between text-xs font-bold text-neutral-300 px-2 mb-2.5">
                   <span className="flex items-center gap-1.5">
-                    <SlidersHorizontal className="w-3.5 h-3.5 text-[#ff4d79]" />
+                    <SlidersHorizontal className="w-4 h-4 text-[#ff4d79]" />
                     <span>وزن‌های تطبیقی فروشگاه (L1=۱۰۰٪)</span>
                   </span>
-                  <span className="text-[10px] text-[#ff7597] font-mono">
+                  <span className="text-xs text-[#ff7597] font-mono">
                     {activeWeights.length.toLocaleString('fa-IR')} پارامتر
                   </span>
                 </div>
 
-                <div className="space-y-2 px-1 max-h-56 overflow-y-auto pr-1">
+                <div className="space-y-2 px-1 max-h-60 overflow-y-auto pr-1">
                   {activeWeights.slice(0, 8).map((slot) => (
                     <div
                       key={slot.key}
-                      className="p-2 rounded-xl bg-[#13131b] border border-[#20202c] space-y-1"
+                      className="p-2.5 rounded-xl bg-[#13131b] border border-[#20202c] space-y-1.5"
                     >
-                      <div className="flex items-center justify-between text-[11px]">
+                      <div className="flex items-center justify-between text-[13px]">
                         <span className="text-neutral-200 font-semibold truncate">
                           {slot.label_fa}
                         </span>
-                        <span className="text-[#ff6688] font-bold font-mono text-[10px]">
+                        <span className="text-[#ff6688] font-bold font-mono text-xs">
                           {Math.round(slot.weight * 100).toLocaleString('fa-IR')}٪
                         </span>
                       </div>
@@ -248,16 +248,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           {/* Footer: Generic TorobChat In-Person Profile */}
-          <div className="p-3 border-t border-[#1c1c24] bg-[#09090d]">
+          <div className="p-3.5 border-t border-[#1c1c24] bg-[#09090d]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <TorobLogo size={28} animated={true} withGlow={false} />
+                <TorobLogo size={30} animated={true} withGlow={false} />
                 <div>
-                  <div className="text-xs font-bold text-neutral-200">کاربر ترب‌چیت</div>
-                  <div className="text-[10px] text-neutral-500">خرید حضوری · تهران</div>
+                  <div className="text-sm font-bold text-neutral-200">کاربر ترب‌چیت</div>
+                  <div className="text-xs text-neutral-400">خرید حضوری · تهران</div>
                 </div>
               </div>
-              <span className="text-[10px] text-neutral-600 font-mono">{todayFa}</span>
+              <span className="text-xs text-neutral-500 font-mono">{todayFa}</span>
             </div>
           </div>
         </div>

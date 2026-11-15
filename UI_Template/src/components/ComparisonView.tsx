@@ -46,15 +46,15 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <Swords className="w-5 h-5 text-[#e9325a]" />
-              <h2 className="text-base md:text-lg font-extrabold text-white">
+              <h2 className="text-base md:text-xl font-extrabold text-white">
                 نبرد و مقایسه تخصصی مدل‌های «{activeCategoryName}» برای خرید حضوری در تهران
               </h2>
             </div>
-            <p className="text-xs text-neutral-400 mt-1">
+            <p className="text-[13px] sm:text-sm text-neutral-400 mt-1 leading-relaxed">
               مقایسه مشخصات فنی واقعی کاتالوگ ترب، تعداد مغازه‌های دارای موجودی حضوری و کف قیمت بازار تهران
             </p>
           </div>
-          <span className="text-[11px] font-bold text-[#ff7597] bg-[#e9325a]/15 border border-[#e9325a]/30 px-3 py-1 rounded-xl">
+          <span className="text-xs sm:text-[13px] font-bold text-[#ff7597] bg-[#e9325a]/15 border border-[#e9325a]/30 px-3 py-1 rounded-xl">
             {comparedProducts.length.toLocaleString('fa-IR')} مدل برگزیده
           </span>
         </div>
@@ -68,7 +68,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
             return (
               <div
                 key={product.id}
-                className={`p-4 rounded-2xl flex flex-col justify-between border transition-all ${
+                className={`p-4 sm:p-5 rounded-2xl flex flex-col justify-between border transition-all ${
                   index === 0
                     ? 'torob-gradient-border bg-[#14141d]'
                     : 'bg-[#121219] border-[#20202c]'
@@ -76,12 +76,12 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
               >
                 <div className="space-y-4">
                   {/* Top Badge */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-lg bg-[#e9325a]/15 text-[#ff4d79] border border-[#e9325a]/30 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-[#e9325a]/15 text-[#ff4d79] border border-[#e9325a]/30 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" />
                       {product.badge || (index === 0 ? 'بهترین ارزش خرید' : 'گزینه جایگزین')}
                     </span>
-                    <span className="text-[11px] text-neutral-400">
+                    <span className="text-xs text-neutral-400">
                       امتیاز تطابق: <strong className="text-white">{product.rating}</strong>
                     </span>
                   </div>
@@ -99,20 +99,22 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
                   )}
 
                   <div>
-                    <h3 className="text-sm font-black text-white leading-relaxed">
+                    <h3 className="text-[15px] sm:text-base font-black text-white leading-relaxed">
                       {product.title}
                     </h3>
-                    <p className="text-[11px] text-neutral-400 mt-1">{product.bestFor}</p>
+                    <p className="text-[13px] sm:text-sm text-neutral-400 mt-1 leading-relaxed">
+                      {product.bestFor}
+                    </p>
                   </div>
 
                   {/* Price Box */}
-                  <div className="p-3 rounded-xl bg-[#0d0d13] border border-[#1d1d26]">
-                    <div className="text-[10px] text-neutral-400">بازه قیمت حضوری در تهران:</div>
-                    <div className="text-sm font-extrabold text-[#ff4d79] mt-0.5">
+                  <div className="p-3.5 rounded-xl bg-[#0d0d13] border border-[#1d1d26]">
+                    <div className="text-xs text-neutral-400">بازه قیمت حضوری در تهران:</div>
+                    <div className="text-base sm:text-lg font-extrabold text-[#ff4d79] mt-0.5">
                       از {product.minPrice.toLocaleString('fa-IR')} تومان
                     </div>
-                    <div className="text-[10px] text-neutral-400 mt-1 flex items-center gap-1">
-                      <Store className="w-3 h-3 text-emerald-400" />
+                    <div className="text-xs text-neutral-400 mt-1 flex items-center gap-1.5">
+                      <Store className="w-3.5 h-3.5 text-emerald-400" />
                       <span>
                         موجود در {product.storeCount.toLocaleString('fa-IR')} فروشگاه حضوری (
                         {(openCount || product.storeCount).toLocaleString('fa-IR')} مغازه فعال)
@@ -122,8 +124,8 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
 
                   {/* Dynamic Category Specs Table (`T025`) */}
                   {dynamicSpecKeys.length > 0 && (
-                    <div className="space-y-1.5 text-xs">
-                      <div className="text-[11px] font-bold text-neutral-400 mb-1">
+                    <div className="space-y-1.5 text-[13px] sm:text-sm">
+                      <div className="text-xs sm:text-[13px] font-bold text-neutral-400 mb-1">
                         مشخصات کلیدی کاتالوگ:
                       </div>
                       {dynamicSpecKeys.map((specKey) => (
@@ -142,27 +144,31 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
 
                   {/* Pros & Cons */}
                   <div className="space-y-2 pt-1">
-                    <div className="text-[11px] font-bold text-emerald-400">نقاط قوت:</div>
-                    <ul className="space-y-1">
+                    <div className="text-xs sm:text-[13px] font-bold text-emerald-400">
+                      نقاط قوت:
+                    </div>
+                    <ul className="space-y-1.5">
                       {product.pros.map((pro, idx) => (
                         <li
                           key={idx}
-                          className="text-[11px] text-neutral-300 flex items-start gap-1.5"
+                          className="text-xs sm:text-[13px] text-neutral-300 flex items-start gap-1.5 leading-relaxed"
                         >
-                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                           <span>{pro}</span>
                         </li>
                       ))}
                     </ul>
 
-                    <div className="text-[11px] font-bold text-rose-400 pt-1">ملاحظات خرید:</div>
-                    <ul className="space-y-1">
+                    <div className="text-xs sm:text-[13px] font-bold text-rose-400 pt-1">
+                      ملاحظات خرید:
+                    </div>
+                    <ul className="space-y-1.5">
                       {product.cons.map((con, idx) => (
                         <li
                           key={idx}
-                          className="text-[11px] text-neutral-400 flex items-start gap-1.5"
+                          className="text-xs sm:text-[13px] text-neutral-400 flex items-start gap-1.5 leading-relaxed"
                         >
-                          <X className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                          <X className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                           <span>{con}</span>
                         </li>
                       ))}
@@ -173,9 +179,9 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({
                 {/* Action Button */}
                 <button
                   onClick={() => onSelectProductForStores(product)}
-                  className="mt-5 w-full py-2.5 px-4 rounded-xl bg-[#e9325a] hover:bg-[#d6254d] text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="mt-5 w-full py-2.5 px-4 rounded-xl bg-[#e9325a] hover:bg-[#d6254d] text-white text-[13px] sm:text-sm font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Store className="w-3.5 h-3.5" />
+                  <Store className="w-4 h-4" />
                   <span>مشاهده مغازه‌های حضوری این مدل</span>
                 </button>
               </div>

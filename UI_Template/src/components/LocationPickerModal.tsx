@@ -117,14 +117,14 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
       className: 'torob-picker-pin',
       html: `
         <div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-14px);">
-          <div style="background:#e9325a;color:#fff;padding:4px 10px;border-radius:999px;font-family:'Vazirmatn',sans-serif;font-size:11px;font-weight:900;border:2px solid #fff;box-shadow:0 6px 18px rgba(233,50,90,0.65);white-space:nowrap;direction:rtl;">
+          <div style="background:#e9325a;color:#fff;padding:4px 11px;border-radius:999px;font-family:'Vazirmatn',sans-serif;font-size:12px;font-weight:900;border:2px solid #fff;box-shadow:0 6px 18px rgba(233,50,90,0.65);white-space:nowrap;direction:rtl;">
             📍 ${label}
           </div>
           <div style="width:3px;height:10px;background:#fff;border-radius:2px;box-shadow:0 2px 6px rgba(0,0,0,0.6);"></div>
         </div>
       `,
-      iconSize: [160, 40],
-      iconAnchor: [80, 26],
+      iconSize: [175, 42],
+      iconAnchor: [87, 28],
     });
 
   useEffect(() => {
@@ -230,15 +230,15 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
       >
         {/* Header */}
         <div className="px-4 py-3.5 bg-[#151520] border-b border-[#232334] flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#e9325a]/15 border border-[#e9325a]/30 flex items-center justify-center text-[#ff4d79]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#e9325a]/15 border border-[#e9325a]/30 flex items-center justify-center text-[#ff4d79] shrink-0">
               <MapPin className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-white">
+              <h3 className="text-sm sm:text-base font-black text-white">
                 انتخاب دستی موقعیت مکانی شما روی نقشه تهران
               </h3>
-              <p className="text-[11px] text-neutral-400">
+              <p className="text-xs sm:text-[13px] text-neutral-400 mt-0.5 leading-relaxed">
                 روی هر نقطه از نقشه کلیک کنید یا پین را بکشید تا مسافت و رتبهٔ مغازه‌ها از همان نقطه محاسبه شود
               </p>
             </div>
@@ -250,7 +250,7 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
               onClick={() =>
                 setMapStyle((prev) => (prev === 'persian_osm' ? 'dark' : 'persian_osm'))
               }
-              className="px-2.5 py-1.5 rounded-xl bg-[#1d1d2b] hover:bg-[#27273a] border border-[#323248] text-[11px] font-bold text-white flex items-center gap-1.5 cursor-pointer transition-colors"
+              className="px-3 py-1.5 rounded-xl bg-[#1d1d2b] hover:bg-[#27273a] border border-[#323248] text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer transition-colors"
               title="تغییر ظاهر نقشه"
             >
               {mapStyle === 'persian_osm' ? (
@@ -291,11 +291,11 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
             <div className="min-w-0">
-              <div className="text-xs font-extrabold text-white truncate">
+              <div className="text-[13px] sm:text-sm font-extrabold text-white truncate">
                 مبدأ انتخابی: {resolvedLabel.name}{' '}
                 <span className="text-neutral-400 font-medium">({resolvedLabel.area})</span>
               </div>
-              <div className="text-[11px] text-neutral-400 font-mono">
+              <div className="text-xs text-neutral-400 font-mono mt-0.5">
                 عرض جغرافیایی:{' '}
                 {draftCoords.lat.toLocaleString('fa-IR', {
                   minimumFractionDigits: 4,
@@ -314,14 +314,14 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-2 rounded-xl bg-[#1e1e2b] hover:bg-[#282838] text-neutral-300 text-xs font-bold border border-[#2f2f42] transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-[#1e1e2b] hover:bg-[#282838] text-neutral-300 text-[13px] sm:text-sm font-bold border border-[#2f2f42] transition-colors cursor-pointer"
             >
               انصراف
             </button>
             <button
               type="button"
               onClick={handleConfirm}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#e9325a] to-[#ff4d79] hover:opacity-95 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-lg shadow-[#e9325a]/30 transition-all cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#e9325a] to-[#ff4d79] hover:opacity-95 text-white text-[13px] sm:text-sm font-extrabold flex items-center gap-1.5 shadow-lg shadow-[#e9325a]/30 transition-all cursor-pointer"
             >
               <Check className="w-4 h-4" />
               <span>ثبت موقعیت و محاسبه پیشنهادها</span>

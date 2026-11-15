@@ -53,7 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Animated Torob Radish Mascot Logo */}
             <TorobLogo size={32} animated={true} />
 
-            <span className="font-black text-base text-white tracking-tight group-hover:text-[#ff4d79] transition-colors">
+            <span className="font-black text-lg sm:text-xl text-white tracking-tight group-hover:text-[#ff4d79] transition-colors">
               ترب‌چیت
             </span>
           </div>
@@ -113,9 +113,9 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onOpenLocationPicker}
             title="انتخاب دستی موقعیت مکانی روی نقشه تهران"
-            className="px-2.5 py-2 rounded-xl bg-[#14141e] hover:bg-[#1b1b29] text-neutral-200 hover:text-white border border-[#252535] hover:border-[#ff4d79]/60 transition-all flex items-center gap-1.5 text-xs font-bold max-w-[165px] sm:max-w-[230px] cursor-pointer"
+            className="px-3 py-2 rounded-xl bg-[#14141e] hover:bg-[#1b1b29] text-neutral-200 hover:text-white border border-[#252535] hover:border-[#ff4d79]/60 transition-all flex items-center gap-1.5 text-[13px] sm:text-sm font-bold max-w-[185px] sm:max-w-[260px] cursor-pointer"
           >
-            <MapPin className="w-3.5 h-3.5 text-[#ff4d79] shrink-0" />
+            <MapPin className="w-4 h-4 text-[#ff4d79] shrink-0" />
             <span className="truncate">{userLocation.name}</span>
           </button>
 
