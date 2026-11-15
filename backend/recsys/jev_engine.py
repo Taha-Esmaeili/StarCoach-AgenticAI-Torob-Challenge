@@ -1098,6 +1098,7 @@ async def score_candidate_products_with_decision_model(
             norm_score *= 0.35
 
         item["matched_traits"] = verified_traits[:2]
+        item["lexical_sim"] = round(float(orig.get("trgm_sim") or 0.5), 4)
         item["trgm_sim"] = round(norm_score, 4)
         item["decision_score"] = round(norm_score, 4)
         item["decision_confidence"] = round(conf, 4)
@@ -1123,12 +1124,17 @@ async def score_candidate_products_with_decision_model(
             key=lambda p: (
                 round(float(p.get("decision_score") or 0.0), 1),
                 -int(p.get("min_price_toman") or 0),
+                float(p.get("lexical_sim") or 0.5),
             ),
             reverse=True,
         )
     else:
         scored_list.sort(
-            key=lambda p: (float(p.get("decision_score") or 0.0), int(p.get("store_count") or 0)),
+            key=lambda p: (
+                float(p.get("decision_score") or 0.0),
+                round(float(p.get("lexical_sim") or 0.5), 2),
+                int(p.get("store_count") or 0),
+            ),
             reverse=True,
         )
     return scored_list[:limit]

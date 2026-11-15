@@ -1073,12 +1073,21 @@ async def post_feedback(
     profile_mutated = False
     if req.feedback_type == "weight_override" and req.weight_overrides:
         explicit_deltas = {k: float(v) for k, v in req.weight_overrides.items()}
-        for k, v in explicit_deltas.items():
-            session_judgments[k] = ScoreJudgment(score=float(v), confidence=0.96)
         user_profile = update_store_weights_contrastive(
             user_profile,
             explicit_deltas=explicit_deltas,
         )
+        # Sync all 5 store criteria into session_judgments if any judgment is active so dragging 1 slider
+        # doesn't trigger single-key Sparse Override and crush the other 4 sliders to 0.035
+        has_active_mention = any(
+            j.score >= settings.recsys_mention_score_threshold for j in session_judgments.values()
+        )
+        if has_active_mention:
+            for k, sw_val in (user_profile.get("store_weights") or {}).items():
+                session_judgments[k] = ScoreJudgment(score=float(sw_val), confidence=0.92)
+        for k, v in explicit_deltas.items():
+            if has_active_mention:
+                session_judgments[k] = ScoreJudgment(score=float(v), confidence=0.96)
         profile_mutated = True
 
     include_custom = bool(custom_criterion)

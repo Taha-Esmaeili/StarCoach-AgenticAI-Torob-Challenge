@@ -348,3 +348,50 @@ def test_07_bounded_memory_and_feedback_contracts():
     )
     assert req_const.require_torob_pay is True
     assert req_const.hard_constraints is not None and req_const.hard_constraints.require_open_now is True
+
+
+def test_08_per_product_price_bounds_reputation_and_zero_variance_redistribution():
+    # 1. Per-product price bounds: cheapest offer for Product B (40M) must get f_price == 1.0
+    # even when Product A (20M) is in the same multi-product candidate pool!
+    mixed_pool = [
+        {
+            "offer_id": "a_1",
+            "product_id": "prod_a",
+            "shop_id": "s_a1",
+            "price_toman": 20_000_000,
+            "distance_km": 4.0,
+            "is_open_now": True,
+            "shop_score": 4.8,
+            "votes_count": 120,
+        },
+        {
+            "offer_id": "b_1",
+            "product_id": "prod_b",
+            "shop_id": "s_b1",
+            "price_toman": 40_000_000,
+            "distance_km": 1.0,
+            "is_open_now": True,
+            "shop_score": 4.9,
+            "votes_count": 200,
+        },
+        {
+            "offer_id": "b_2",
+            "product_id": "prod_b",
+            "shop_id": "s_b2",
+            "price_toman": 48_000_000,
+            "distance_km": 8.0,
+            "is_open_now": True,
+            "shop_score": 2.2,
+            "votes_count": 60,
+        },
+    ]
+    # 2. Zero-variance w_open_now (all 3 stores are open) redistributes weight so b_1 beats b_2 on price+distance+reputation
+    ranked, _ = score_and_rank_offers_with_meta(
+        mixed_pool,
+        l1_weights={"w_open_now": 0.88, "w_price": 0.06, "w_distance": 0.04, "w_trust_freshness": 0.02},
+        hard_constraints=HardConstraintsState(require_open_now=True),
+    )
+    by_id = {r.offer_id: r for r in ranked}
+    assert by_id["b_1"].feature_scores["f_price"] == pytest.approx(1.0)
+    assert by_id["b_1"].feature_scores["f_trust_freshness"] > by_id["b_2"].feature_scores["f_trust_freshness"]
+    assert by_id["b_1"].utility_score > by_id["b_2"].utility_score + 15

@@ -466,7 +466,7 @@ async def search_products(
                             products.category_name, products.brand_name, products.image_url,
                             products.specs_json, products.min_price_toman, products.max_price_toman,
                             products.offer_count,
-                            GREATEST(word_similarity($1, products.normalized_name), 0.72) AS trgm_sim,
+                            word_similarity($1, products.normalized_name) AS trgm_sim,
                             (
                                 (
                                     SELECT COUNT(*)
@@ -737,39 +737,56 @@ async def fetch_candidate_offers(
     async with pg_pool.acquire() as conn:
         if product_ids:
             sql = """
-                SELECT
-                    o.offer_id, o.product_id, o.shop_id, o.price_toman,
-                    o.seller_title, o.description, o.warranty_raw,
-                    o.has_official_warranty, o.warranty_provider, o.last_price_changed_at,
-                    p.persian_title AS product_name, p.category_name, p.specs_json,
-                    s.name AS shop_name, s.latitude, s.longitude, s.address,
-                    s.mall_name, s.floor_label, s.unit_label, s.mall_note,
-                    s.primary_phone, s.score AS shop_score, s.votes_count,
-                    s.supports_fast_delivery, s.has_in_person_installment,
-                    s.installment_providers, s.weekly_hours_json,
-                    s.website_url, s.instagram, s.is_real_torob_shop
-                FROM offers o
-                JOIN shops s ON s.shop_id = o.shop_id
-                JOIN products p ON p.product_id = o.product_id
-                WHERE o.product_id = ANY($1::text[])
-                  AND NOT (o.offer_id = ANY($2::text[]))
-                  AND NOT (o.shop_id = ANY($3::text[]))
-                  AND p.normalized_name NOT LIKE '%حذف شده%'
-                  AND p.category_name NOT LIKE '%حذف%'
+                WITH ranked_offers AS (
+                    SELECT
+                        o.offer_id, o.product_id, o.shop_id, o.price_toman,
+                        o.seller_title, o.description, o.warranty_raw,
+                        o.has_official_warranty, o.warranty_provider, o.last_price_changed_at,
+                        p.persian_title AS product_name, p.category_name, p.specs_json,
+                        s.name AS shop_name, s.latitude, s.longitude, s.address,
+                        s.mall_name, s.floor_label, s.unit_label, s.mall_note,
+                        s.primary_phone, s.score AS shop_score, s.votes_count,
+                        s.supports_fast_delivery, s.has_in_person_installment,
+                        s.installment_providers, s.weekly_hours_json,
+                        s.website_url, s.instagram, s.is_real_torob_shop,
+                        (
+                            (CASE WHEN $8 > 0 AND o.price_toman > $8 THEN 4 ELSE 0 END)
+                            + (CASE WHEN $7 AND NOT (s.installment_providers && ARRAY['ترب‌پی', 'ترب پی']::text[]) THEN 2 ELSE 0 END)
+                            + (CASE WHEN $6 AND NOT s.has_in_person_installment THEN 2 ELSE 0 END)
+                            + (
+                                CASE
+                                    WHEN $9 > 0
+                                     AND SQRT(POWER((s.latitude - $4) * 111.0, 2) + POWER((s.longitude - $5) * 90.1, 2)) > $9
+                                    THEN 2
+                                    ELSE 0
+                                END
+                            )
+                        ) AS constraint_penalty,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY o.product_id
+                            ORDER BY s.is_real_torob_shop DESC, o.price_toman ASC
+                        ) AS price_rn,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY o.product_id
+                            ORDER BY SQRT(POWER((s.latitude - $4) * 111.0, 2) + POWER((s.longitude - $5) * 90.1, 2)) ASC,
+                                     o.price_toman ASC
+                        ) AS dist_rn
+                    FROM offers o
+                    JOIN shops s ON s.shop_id = o.shop_id
+                    JOIN products p ON p.product_id = o.product_id
+                    WHERE o.product_id = ANY($1::text[])
+                      AND NOT (o.offer_id = ANY($2::text[]))
+                      AND NOT (o.shop_id = ANY($3::text[]))
+                      AND p.normalized_name NOT LIKE '%حذف شده%'
+                      AND p.category_name NOT LIKE '%حذف%'
+                )
+                SELECT *
+                FROM ranked_offers
                 ORDER BY
-                    (CASE WHEN $8 > 0 AND o.price_toman > $8 THEN 1 ELSE 0 END) ASC,
-                    (CASE WHEN $7 AND NOT (s.installment_providers && ARRAY['ترب‌پی', 'ترب پی']::text[]) THEN 1 ELSE 0 END) ASC,
-                    (CASE WHEN $6 AND NOT s.has_in_person_installment THEN 1 ELSE 0 END) ASC,
-                    (
-                        CASE
-                            WHEN $9 > 0
-                             AND SQRT(POWER((s.latitude - $4) * 111.0, 2) + POWER((s.longitude - $5) * 90.1, 2)) > $9
-                            THEN 1
-                            ELSE 0
-                        END
-                    ) ASC,
-                    s.is_real_torob_shop DESC,
-                    o.price_toman ASC
+                    constraint_penalty ASC,
+                    LEAST(price_rn, dist_rn) ASC,
+                    is_real_torob_shop DESC,
+                    price_toman ASC
                 LIMIT $10
             """
             rows = await conn.fetch(

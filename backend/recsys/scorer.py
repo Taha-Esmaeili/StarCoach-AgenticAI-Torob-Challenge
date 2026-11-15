@@ -39,6 +39,24 @@ def _compute_authentic_price_bounds(
     return eff_min, authentic_floor
 
 
+def _compute_per_product_price_bounds(
+    candidates: list[dict[str, Any]],
+    wants_used_or_stock: bool = False,
+) -> tuple[dict[str, tuple[int, int]], tuple[int, int]]:
+    """Compute `(min_price, authentic_floor)` per `product_id` so multi-product pools don't distort price scores."""
+    global_bounds = _compute_authentic_price_bounds(candidates, wants_used_or_stock=wants_used_or_stock)
+    by_pid: dict[str, list[dict[str, Any]]] = {}
+    for c in candidates:
+        pid = str(c.get("product_id") or "")
+        if pid:
+            by_pid.setdefault(pid, []).append(c)
+    per_pid_bounds = {
+        pid: _compute_authentic_price_bounds(group, wants_used_or_stock=wants_used_or_stock)
+        for pid, group in by_pid.items()
+    }
+    return per_pid_bounds, global_bounds
+
+
 def _compute_feature_vector(
     offer: dict[str, Any],
     min_price: int,
@@ -70,9 +88,12 @@ def _compute_feature_vector(
     age_days = max(0.0, float(offer.get("freshness_age_days", 3.0)))
     half_life = max(1.0, float(settings.recsys_freshness_half_life_days))
     fresh_part = math.exp(-age_days / half_life)
+    raw_shop_score = max(0.0, min(5.0, float(offer.get("shop_score", 4.5)))) / 5.0
+    votes = max(0, int(offer.get("votes_count", 15)))
+    rep_part = (votes * raw_shop_score + 10.0 * 0.84) / (votes + 10.0)
     real_part = 1.0 if offer.get("is_real_torob_shop") else 0.0
     warr_part = 1.0 if offer.get("has_official_warranty") else 0.0
-    f_trust_freshness = 0.65 * fresh_part + 0.20 * real_part + 0.15 * warr_part
+    f_trust_freshness = 0.45 * fresh_part + 0.25 * rep_part + 0.15 * real_part + 0.15 * warr_part
 
     f_installment = 1.0 if offer.get("has_in_person_installment") else 0.0
 
@@ -179,6 +200,9 @@ def build_why_this_shop_fa(
                 reasons.append("فروشگاه رسمی تاییدشده ترب")
             elif offer.get("has_official_warranty"):
                 reasons.append(str(offer.get("warranty_provider") or "گارانتی معتبر شرکتی"))
+            elif float(offer.get("shop_score", 0.0)) >= 4.6 and int(offer.get("votes_count", 0)) >= 20:
+                sc_str = to_persian_digits(round(float(offer["shop_score"]), 1))
+                reasons.append(f"امتیاز غرفه {sc_str} از ۵ در ترب")
 
     if not reasons:
         reasons.append(f"{to_persian_digits(dist_km)} کیلومتر فاصله ({to_persian_digits(drive_m)} دقیقه)")
@@ -215,22 +239,44 @@ def score_and_rank_offers_with_meta(
     if not working_pool:
         return [], unmet_labels
 
-    min_price, authentic_floor = _compute_authentic_price_bounds(
+    per_pid_bounds, global_bounds = _compute_per_product_price_bounds(
         working_pool,
         wants_used_or_stock=wants_used_or_stock,
     )
 
-    # Pre-compute feature vectors so globally zeroed features (when a constraint was relaxed) don't crush all utilities to 10%
-    raw_feature_rows = [
-        (cand, _compute_feature_vector(cand, min_price=min_price, authentic_floor=authentic_floor))
-        for cand in working_pool
-    ]
+    # Pre-compute feature vectors using per-product price bounds so multi-product pools don't distort f_price
+    raw_feature_rows = []
+    for cand in working_pool:
+        pid = str(cand.get("product_id") or "")
+        p_min, p_floor = per_pid_bounds.get(pid, global_bounds)
+        raw_feature_rows.append(
+            (cand, _compute_feature_vector(cand, min_price=p_min, authentic_floor=p_floor))
+        )
 
     effective_w: dict[str, float] = {}
     for k, w in l1_weights.items():
         max_fk = max((fr[1].get(k, 0.0) for fr in raw_feature_rows), default=0.0)
         if max_fk > 1e-6:
             effective_w[k] = float(w)
+
+    # If a binary constraint feature (`w_open_now` or `w_installment`) has zero variance across >1 stores
+    # (e.g. all surviving stores are open), redistribute 80% of its excess weight across discriminative features
+    if len(raw_feature_rows) > 1 and effective_w:
+        priors = settings.default_store_weights
+        redistributed = 0.0
+        for bin_key in ("w_open_now", "w_installment"):
+            if bin_key in effective_w and effective_w[bin_key] > 0.25:
+                vals = [fr[1].get(bin_key, 0.0) for fr in raw_feature_rows]
+                if max(vals) - min(vals) < 1e-6:
+                    keep = 0.15 * effective_w[bin_key]
+                    redistributed += effective_w[bin_key] - keep
+                    effective_w[bin_key] = keep
+        if redistributed > 0:
+            disc_keys = [k for k in ("w_price", "w_distance", "w_trust_freshness") if k in effective_w]
+            prior_sum = sum(float(priors.get(k, 0.3)) for k in disc_keys) or 1.0
+            for k in disc_keys:
+                effective_w[k] += redistributed * (float(priors.get(k, 0.3)) / prior_sum)
+
     if effective_w:
         w_sum = sum(effective_w.values())
         effective_w = {k: v / w_sum for k, v in effective_w.items()}
