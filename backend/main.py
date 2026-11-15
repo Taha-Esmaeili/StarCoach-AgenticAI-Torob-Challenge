@@ -67,6 +67,7 @@ from backend.recsys.deduplicator import sync_user_traits
 from backend.recsys.jev_engine import (
     ExtractedTrait,
     ScoreJudgment,
+    close_shared_http_client,
     evaluate_turn_with_jev,
     score_candidate_products_with_decision_model,
     score_custom_offer_criterion_with_decision_model,
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI):
         await app.state.pg_pool.close()
     if getattr(app.state, "redis", None) is not None:
         await app.state.redis.aclose()
+    await close_shared_http_client()
 
 
 app = FastAPI(
@@ -957,6 +959,13 @@ async def post_feedback(
     hard_raw = dict(session.get("hard_constraints") or {})
     if req.hard_constraints is not None:
         hard_raw.update(req.hard_constraints.model_dump())
+    if req.require_torob_pay is not None:
+        req_torob_pay = bool(req.require_torob_pay)
+        if req_torob_pay:
+            hard_raw["require_installment"] = True
+    if req.selected_product_id is not None:
+        sel_str = str(req.selected_product_id).strip()
+        session["selected_product_id"] = sel_str if sel_str else None
 
     session_judgments: dict[str, ScoreJudgment] = {}
     for k, raw_j in (session.get("session_weights") or {}).items():
@@ -1227,7 +1236,25 @@ async def post_feedback(
                 ]
 
             if product_cards:
-                target_pids = [str(p.product_id) for p in product_cards[:3]]
+                explicit_sel_pid = (
+                    str(req.selected_product_id).strip()
+                    if req.selected_product_id is not None
+                    else (
+                        str(session.get("selected_product_id") or "").strip()
+                        if req.feedback_type in ("product_select", "weight_override", "location_update", "constraint_update")
+                        else ""
+                    )
+                )
+                if explicit_sel_pid and explicit_sel_pid not in rej_prods:
+                    if not any(str(p.product_id) == explicit_sel_pid for p in product_cards):
+                        sel_prod_raw = await fetch_product_by_id(pg_pool, explicit_sel_pid)
+                        if sel_prod_raw is not None:
+                            extra_cards = _build_recommended_product_cards([sel_prod_raw])
+                            if extra_cards:
+                                product_cards = [extra_cards[0], *product_cards][:4]
+                    target_pids = [explicit_sel_pid]
+                else:
+                    target_pids = [str(p.product_id) for p in product_cards[:3]]
                 cat_name = str(product_cards[0].category_name)
                 raw_offers = await fetch_candidate_offers(
                     pg_pool,
@@ -1483,7 +1510,7 @@ async def post_feedback(
                 "turn_response": resp_obj.model_dump(),
             }
         )
-    elif req.feedback_type in ("weight_override", "location_update") and scored_stores:
+    elif req.feedback_type in ("weight_override", "location_update", "product_select", "constraint_update") and scored_stores:
         for t in reversed(ui_turns):
             tr = t.get("turn_response")
             if isinstance(tr, dict) and tr.get("stores"):
@@ -1675,10 +1702,11 @@ if _DIST_DIR.is_dir():
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
-        candidate = _DIST_DIR / full_path
-        if full_path and candidate.is_file():
+        dist_root = _DIST_DIR.resolve()
+        candidate = (_DIST_DIR / full_path).resolve()
+        if full_path and candidate.is_relative_to(dist_root) and candidate.is_file():
             return FileResponse(str(candidate))
-        index_file = _DIST_DIR / "index.html"
+        index_file = dist_root / "index.html"
         if index_file.is_file():
             return FileResponse(str(index_file))
         raise HTTPException(status_code=404, detail="SPA index not found")

@@ -358,12 +358,21 @@ export async function postFeedback(payload: {
     | 'thumbs_down'
     | 'weight_override'
     | 'price_discrepancy'
-    | 'location_update';
+    | 'location_update'
+    | 'product_select'
+    | 'constraint_update';
   target_offer_id?: string | number;
   target_product_id?: string | number;
+  selected_product_id?: string | number | null;
   selected_option_id?: string;
   clarification_answers?: Record<string, string>;
   weight_overrides?: Record<string, number>;
+  hard_constraints?: {
+    require_open_now?: boolean;
+    require_installment?: boolean;
+    require_warranty?: boolean;
+  };
+  require_torob_pay?: boolean;
   user_location?: CoordinatesDto;
 }): Promise<ChatTurnResponseDto> {
   const res = await fetch(`${API_BASE}/feedback`, {

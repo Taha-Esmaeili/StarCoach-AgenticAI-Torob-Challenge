@@ -11,6 +11,7 @@ import {
 import {
   ActiveWeightSlotDto,
   ChatTurnResponseDto,
+  ScoredStoreOfferDto,
   SessionHistoryDetailDto,
   deleteUserSession,
   fetchSessionDetail,
@@ -670,7 +671,30 @@ export function App() {
     }
   };
 
-  // Handle interactive 15-parameter weight slider override in Sidebar (`T019`)
+  const syncUpdatedStoresToState = (storesDto?: ScoredStoreOfferDto[]) => {
+    if (!storesDto || storesDto.length === 0) return;
+    const updatedOffers = storesDto.map(mapDtoToShopOffer);
+    setAllShopOffers(updatedOffers);
+    setMessages((prev) => {
+      let lastOffersIdx = -1;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].shopOffers && prev[i].shopOffers!.length > 0) {
+          lastOffersIdx = i;
+          break;
+        }
+      }
+      if (lastOffersIdx === -1) return prev;
+      return prev.map((m, idx) =>
+        idx === lastOffersIdx ? { ...m, shopOffers: updatedOffers } : m
+      );
+    });
+    setActiveTripOffer((prevTrip) => {
+      if (!prevTrip) return null;
+      return updatedOffers.find((o) => o.id === prevTrip.id) || prevTrip;
+    });
+  };
+
+  // Handle interactive adaptive weight slider override in Sidebar (`T019`)
   const handleWeightChange = async (key: string, val: number) => {
     setActiveWeights((prev) =>
       prev.map((s) => (s.key === key ? { ...s, unconstrained_weight: val } : s))
@@ -681,14 +705,64 @@ export function App() {
         user_id: userIdRef.current,
         feedback_type: 'weight_override',
         weight_overrides: { [key]: val },
+        selected_product_id: selectedProduct?.id,
         user_location: { lat: userLocation.lat, lng: userLocation.lng },
       });
       if (data.recsys_state?.active_weights) {
         setActiveWeights(data.recsys_state.active_weights);
       }
-      if (data.stores && data.stores.length > 0) {
-        setAllShopOffers(data.stores.map(mapDtoToShopOffer));
+      syncUpdatedStoresToState(data.stores);
+    } catch {
+      // ignore if offline
+    }
+  };
+
+  // Handle selecting a specific product card to fetch & rank its stores
+  const handleSelectProduct = async (prod: Product) => {
+    setSelectedProduct(prod);
+    if (messages.length === 0) return;
+    try {
+      const data = await postFeedback({
+        session_id: sessionIdRef.current,
+        user_id: userIdRef.current,
+        feedback_type: 'product_select',
+        selected_product_id: prod.id,
+        user_location: { lat: userLocation.lat, lng: userLocation.lng },
+      });
+      if (data.recsys_state?.active_weights) {
+        setActiveWeights(data.recsys_state.active_weights);
       }
+      syncUpdatedStoresToState(data.stores);
+    } catch {
+      // ignore if offline
+    }
+  };
+
+  // Sync sidebar hard-constraint checkboxes with backend RecSys & ChatView/StoresView
+  const syncHardConstraints = async (
+    nextOpenOnly: boolean,
+    nextTorobPay: boolean,
+    nextInstallment: boolean
+  ) => {
+    if (messages.length === 0) return;
+    try {
+      const data = await postFeedback({
+        session_id: sessionIdRef.current,
+        user_id: userIdRef.current,
+        feedback_type: 'constraint_update',
+        selected_product_id: selectedProduct?.id,
+        hard_constraints: {
+          require_open_now: nextOpenOnly,
+          require_installment: nextInstallment || nextTorobPay,
+          require_warranty: false,
+        },
+        require_torob_pay: nextTorobPay,
+        user_location: { lat: userLocation.lat, lng: userLocation.lng },
+      });
+      if (data.recsys_state?.active_weights) {
+        setActiveWeights(data.recsys_state.active_weights);
+      }
+      syncUpdatedStoresToState(data.stores);
     } catch {
       // ignore if offline
     }
@@ -715,32 +789,13 @@ export function App() {
         session_id: sessionIdRef.current,
         user_id: userIdRef.current,
         feedback_type: 'location_update',
+        selected_product_id: selectedProduct?.id,
         user_location: { lat: nextLocation.lat, lng: nextLocation.lng },
       });
       if (data.recsys_state?.active_weights) {
         setActiveWeights(data.recsys_state.active_weights);
       }
-      if (data.stores && data.stores.length > 0) {
-        const updatedOffers = data.stores.map(mapDtoToShopOffer);
-        setAllShopOffers(updatedOffers);
-        setMessages((prev) => {
-          let lastOffersIdx = -1;
-          for (let i = prev.length - 1; i >= 0; i -= 1) {
-            if (prev[i].shopOffers && prev[i].shopOffers!.length > 0) {
-              lastOffersIdx = i;
-              break;
-            }
-          }
-          if (lastOffersIdx === -1) return prev;
-          return prev.map((m, idx) =>
-            idx === lastOffersIdx ? { ...m, shopOffers: updatedOffers } : m
-          );
-        });
-        setActiveTripOffer((prevTrip) => {
-          if (!prevTrip) return null;
-          return updatedOffers.find((o) => o.id === prevTrip.id) || prevTrip;
-        });
-      }
+      syncUpdatedStoresToState(data.stores);
     } catch {
       // ignore if offline
     }
@@ -774,11 +829,20 @@ export function App() {
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           filterOpenOnly={filterOpenOnly}
-          setFilterOpenOnly={setFilterOpenOnly}
+          setFilterOpenOnly={(val) => {
+            setFilterOpenOnly(val);
+            void syncHardConstraints(val, filterTorobPay, filterInstallment);
+          }}
           filterTorobPay={filterTorobPay}
-          setFilterTorobPay={setFilterTorobPay}
+          setFilterTorobPay={(val) => {
+            setFilterTorobPay(val);
+            void syncHardConstraints(filterOpenOnly, val, filterInstallment);
+          }}
           filterInstallment={filterInstallment}
-          setFilterInstallment={setFilterInstallment}
+          setFilterInstallment={(val) => {
+            setFilterInstallment(val);
+            void syncHardConstraints(filterOpenOnly, filterTorobPay, val);
+          }}
           activeWeights={activeWeights}
           onWeightChange={handleWeightChange}
         />
@@ -792,7 +856,9 @@ export function App() {
               isLoading={isLoading}
               userLocation={userLocation}
               onOpenLocationPicker={() => setLocationPickerOpen(true)}
-              onSelectProduct={(p) => setSelectedProduct(p)}
+              onSelectProduct={(p) => {
+                void handleSelectProduct(p);
+              }}
               onStartVoiceCall={(offer) => {
                 setContactModalOffer(offer);
                 recordPositiveOfferSelection(offer);
@@ -885,19 +951,19 @@ export function App() {
 
       {/* Floating Minimized Bar for Active Shopping Trip */}
       {activeTripOffer && isTripMinimized && (
-        <div className="fixed bottom-4 left-4 right-4 md:left-8 md:right-auto md:w-96 z-40 p-3 rounded-2xl bg-gradient-to-r from-[#1f1622] via-[#191926] to-[#14141f] border-2 border-[#e9325a] shadow-2xl shadow-black/80 flex items-center justify-between gap-3 animate-fade-in">
+        <div className="fixed bottom-4 left-4 right-4 md:left-8 md:right-auto md:w-[420px] z-40 p-3.5 rounded-2xl bg-gradient-to-r from-[#1f1622] via-[#191926] to-[#14141f] border-2 border-[#e9325a] shadow-2xl shadow-black/80 flex items-center justify-between gap-3 animate-fade-in">
           <div
             onClick={() => setIsTripMinimized(false)}
             className="flex items-center gap-2.5 min-w-0 cursor-pointer flex-1"
           >
-            <div className="w-8 h-8 rounded-xl bg-[#e9325a] text-white flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-[#e9325a] text-white flex items-center justify-center shrink-0">
               <Navigation className="w-4 h-4 animate-pulse" />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-bold text-[#ff80a0]">
+              <div className="text-xs font-bold text-[#ff80a0]">
                 همراه خرید حضوری فعال
               </div>
-              <div className="text-xs font-extrabold text-white truncate">
+              <div className="text-sm font-extrabold text-white truncate">
                 {activeTripOffer.shopName}
               </div>
             </div>
@@ -906,7 +972,7 @@ export function App() {
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={() => setIsTripMinimized(false)}
-              className="px-2.5 py-1.5 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white text-xs sm:text-[13px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
             >
               <span>ادامه</span>
               <ChevronLeft className="w-3.5 h-3.5" />

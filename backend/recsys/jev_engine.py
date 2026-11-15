@@ -132,6 +132,38 @@ def _extract_json_object(raw_text: str) -> dict[str, Any]:
     return json.loads(cleaned)
 
 
+_SHARED_HTTP_CLIENT: httpx.AsyncClient | None = None
+_SHARED_HTTP_LOOP_ID: int | None = None
+
+
+def _get_shared_http_client() -> httpx.AsyncClient:
+    """Return a shared `httpx.AsyncClient` bound to the active event loop for TCP+TLS reuse."""
+    global _SHARED_HTTP_CLIENT, _SHARED_HTTP_LOOP_ID
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = None
+    if (
+        _SHARED_HTTP_CLIENT is None
+        or _SHARED_HTTP_CLIENT.is_closed
+        or _SHARED_HTTP_LOOP_ID != loop_id
+    ):
+        _SHARED_HTTP_CLIENT = httpx.AsyncClient(
+            timeout=max(settings.typesafe_timeout_seconds, settings.llm_timeout_seconds)
+        )
+        _SHARED_HTTP_LOOP_ID = loop_id
+    return _SHARED_HTTP_CLIENT
+
+
+async def close_shared_http_client() -> None:
+    """Close the shared `httpx.AsyncClient` on application shutdown."""
+    global _SHARED_HTTP_CLIENT, _SHARED_HTTP_LOOP_ID
+    if _SHARED_HTTP_CLIENT is not None and not _SHARED_HTTP_CLIENT.is_closed:
+        await _SHARED_HTTP_CLIENT.aclose()
+    _SHARED_HTTP_CLIENT = None
+    _SHARED_HTTP_LOOP_ID = None
+
+
 async def _call_decision_model(state_payload: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
     """Call the dedicated Decision Model (`gemini-decision-1` on Google AI Studio or `Jev` on TypeSafe).
 
@@ -167,23 +199,28 @@ async def _call_decision_model(state_payload: dict[str, Any], questions: dict[st
         }
 
     resp: httpx.Response | None = None
-    async with httpx.AsyncClient(timeout=settings.typesafe_timeout_seconds) as client:
-        for attempt in range(5):
-            try:
-                resp = await client.post(target_url, headers=headers, json=body_payload)
-                if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 4:
-                    break
-                if resp.status_code == 429:
-                    m_delay = re.search(r"retryDelay\"\s*:\s*\"(\d+)", resp.text or "")
-                    wait_s = min(28.0, float(m_delay.group(1)) + 1.5) if m_delay else min(20.0, 3.0 * (2**attempt))
-                    await asyncio.sleep(wait_s)
-                    continue
-            except httpx.HTTPError as exc:
-                if attempt == 4:
-                    raise RuntimeError(
-                        f"خطای شبکه/تایم‌اوت در فراخوانی مدل Decision ({model_name}) از {target_url}: {type(exc).__name__} ({exc})"
-                    ) from exc
-            await asyncio.sleep(1.5 * (2**attempt))
+    client = _get_shared_http_client()
+    for attempt in range(5):
+        try:
+            resp = await client.post(
+                target_url,
+                headers=headers,
+                json=body_payload,
+                timeout=settings.typesafe_timeout_seconds,
+            )
+            if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 4:
+                break
+            if resp.status_code == 429:
+                m_delay = re.search(r"retryDelay\"\s*:\s*\"(\d+)", resp.text or "")
+                wait_s = min(28.0, float(m_delay.group(1)) + 1.5) if m_delay else min(20.0, 3.0 * (2**attempt))
+                await asyncio.sleep(wait_s)
+                continue
+        except httpx.HTTPError as exc:
+            if attempt == 4:
+                raise RuntimeError(
+                    f"خطای شبکه/تایم‌اوت در فراخوانی مدل Decision ({model_name}) از {target_url}: {type(exc).__name__} ({exc})"
+                ) from exc
+        await asyncio.sleep(1.5 * (2**attempt))
     assert resp is not None
 
     if resp.status_code != 200:
@@ -212,15 +249,16 @@ async def embed_text_async(text: str, dim: int | None = None) -> list[float]:
         "input": text,
     }
     try:
-        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/embeddings",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        client = _get_shared_http_client()
+        resp = await client.post(
+            f"{base_url.rstrip('/')}/embeddings",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=settings.llm_timeout_seconds,
+        )
     except httpx.HTTPError as exc:
         raise RuntimeError(
             f"خطای شبکه/تایم‌اوت در فراخوانی امبدینگ {settings.embedding_model} از {base_url}: {type(exc).__name__} ({exc})"
@@ -368,32 +406,33 @@ async def _extract_entities_with_llm(
     )
 
     resp: httpx.Response | None = None
-    async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
-        for attempt in range(4):
-            try:
-                resp = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.llm_model,
-                        "temperature": settings.llm_temperature,
-                        "messages": [
-                            {"role": "system", "content": _LLM_TEXT_EXTRACTION_PROMPT},
-                            {"role": "user", "content": user_content},
-                        ],
-                    },
-                )
-                if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
-                    break
-            except httpx.HTTPError as exc:
-                if attempt == 3:
-                    raise RuntimeError(
-                        f"خطای شبکه/تایم‌اوت در اتصال به مدل زبانی ({settings.llm_model}) در {base_url}: {type(exc).__name__} ({exc})"
-                    ) from exc
-            await asyncio.sleep(1.5 * (2**attempt))
+    client = _get_shared_http_client()
+    for attempt in range(4):
+        try:
+            resp = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.llm_model,
+                    "temperature": settings.llm_temperature,
+                    "messages": [
+                        {"role": "system", "content": _LLM_TEXT_EXTRACTION_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                },
+                timeout=settings.llm_timeout_seconds,
+            )
+            if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
+                break
+        except httpx.HTTPError as exc:
+            if attempt == 3:
+                raise RuntimeError(
+                    f"خطای شبکه/تایم‌اوت در اتصال به مدل زبانی ({settings.llm_model}) در {base_url}: {type(exc).__name__} ({exc})"
+                ) from exc
+        await asyncio.sleep(1.5 * (2**attempt))
     assert resp is not None
 
     if resp.status_code != 200:

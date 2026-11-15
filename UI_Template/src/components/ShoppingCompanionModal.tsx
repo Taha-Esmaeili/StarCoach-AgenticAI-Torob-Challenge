@@ -72,8 +72,8 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
       try {
         const res = await fetchFallbackStore(
           offer.id,
-          offer.coordinates.lat,
-          offer.coordinates.lng,
+          resolvedUserLocation.lat,
+          resolvedUserLocation.lng,
           [offer.shopId]
         );
         setFallbackData({
@@ -140,14 +140,14 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-black px-2 py-0.5 rounded-full bg-[#e9325a]/20 text-[#ff80a0] border border-[#e9325a]/30">
+                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-[#e9325a]/20 text-[#ff80a0] border border-[#e9325a]/30">
                   همراه خرید حضوری
                 </span>
-                <span className="text-xs text-neutral-400 truncate">
+                <span className="text-[13px] text-neutral-400 truncate">
                   {offer.shopName}
                 </span>
               </div>
-              <h3 className="text-sm sm:text-base font-extrabold text-white truncate mt-0.5">
+              <h3 className="text-base sm:text-lg font-extrabold text-white truncate mt-0.5">
                 {product.title}
               </h3>
             </div>
@@ -187,7 +187,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                 <button
                   key={s.num}
                   onClick={() => setCurrentStep(s.num as any)}
-                  className={`py-2 px-1 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-1 ${
+                  className={`py-2 px-1 rounded-xl text-xs sm:text-[13px] font-bold transition-all flex flex-col items-center gap-1 ${
                     isCurrent
                       ? 'bg-[#e9325a] text-white shadow-md shadow-[#e9325a]/30'
                       : isPast
@@ -197,11 +197,11 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                 >
                   <div className="flex items-center gap-1">
                     {isPast ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
                     ) : (
-                      <span className="text-[11px]">{s.num.toLocaleString('fa-IR')}</span>
+                      <span className="text-xs">{s.num.toLocaleString('fa-IR')}</span>
                     )}
-                    <span className="text-[11px] truncate">{s.label}</span>
+                    <span className="text-xs sm:text-[13px] truncate">{s.label}</span>
                   </div>
                 </button>
               );
@@ -210,19 +210,19 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
         </div>
 
         {/* Step Body Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-[13px] sm:text-sm">
           {/* STEP 1: NAVIGATION & ARRIVAL */}
           {currentStep === 1 && (
             <div className="space-y-4 animate-fade-in">
               <div className="p-4 rounded-2xl bg-[#191924] border border-[#272738] space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-[#ff4d79]" />
-                    <span className="font-extrabold text-sm text-white">
+                    <span className="font-extrabold text-sm sm:text-base text-white">
                       مسیریابی به مقصد: {offer.shopName}
                     </span>
                   </div>
-                  <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-xs sm:text-[13px] font-bold border border-amber-500/30">
                     {offer.distanceKm.toLocaleString('fa-IR')} کیلومتر (حدود{' '}
                     {(offer.estimatedDrivingMins || 10).toLocaleString('fa-IR')} دقیقه)
                   </span>
@@ -234,13 +234,13 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                   </span>
                   <button
                     onClick={handleCopy}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] text-neutral-300 flex items-center gap-1 shrink-0 transition-colors border border-[#2e2e42]"
+                    className="px-3 py-1.5 rounded-lg bg-[#20202e] hover:bg-[#2b2b3e] text-neutral-300 text-xs sm:text-[13px] flex items-center gap-1.5 shrink-0 transition-colors border border-[#2e2e42]"
                   >
                     {copiedAddress ? (
                       <span className="text-emerald-400 font-bold">کپی شد!</span>
                     ) : (
                       <>
-                        <Copy className="w-3 h-3 text-neutral-400" />
+                        <Copy className="w-3.5 h-3.5 text-neutral-400" />
                         <span>کپی آدرس</span>
                       </>
                     )}
@@ -250,18 +250,18 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                 {(offer.mallName || offer.mallFloor || offer.mallUnit) && (
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
                     {offer.mallName && (
-                      <span className="px-2.5 py-1 rounded-lg bg-[#1d1d2b] border border-[#2f2f45] text-white font-bold flex items-center gap-1 text-[11px]">
+                      <span className="px-2.5 py-1 rounded-lg bg-[#1d1d2b] border border-[#2f2f45] text-white font-bold flex items-center gap-1.5 text-xs sm:text-[13px]">
                         <Building className="w-3.5 h-3.5 text-[#ff6688]" />
                         <span>{offer.mallName}</span>
                       </span>
                     )}
                     {offer.mallFloor && (
-                      <span className="px-2.5 py-1 rounded-lg bg-[#271825] border border-[#e9325a]/40 text-[#ff80a0] font-bold text-[11px]">
+                      <span className="px-2.5 py-1 rounded-lg bg-[#271825] border border-[#e9325a]/40 text-[#ff80a0] font-bold text-xs sm:text-[13px]">
                         {offer.mallFloor}
                       </span>
                     )}
                     {offer.mallUnit && (
-                      <span className="px-2.5 py-1 rounded-lg bg-[#18252b] border border-sky-500/40 text-sky-300 font-bold text-[11px]">
+                      <span className="px-2.5 py-1 rounded-lg bg-[#18252b] border border-sky-500/40 text-sky-300 font-bold text-xs sm:text-[13px]">
                         {offer.mallUnit}
                       </span>
                     )}
@@ -269,7 +269,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                 )}
 
                 {offer.mallNote && (
-                  <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
+                  <div className="text-xs sm:text-[13px] text-neutral-400 flex items-center gap-1.5">
                     <span className="font-bold text-neutral-300">راهنمای داخل پاساژ:</span>
                     <span>{offer.mallNote}</span>
                   </div>
@@ -287,7 +287,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
                 {/* Direct Navigation Apps */}
                 <div className="pt-2">
-                  <span className="text-[11px] text-neutral-400 block mb-2 font-bold">
+                  <span className="text-xs sm:text-[13px] text-neutral-400 block mb-2 font-bold">
                     باز کردن مسیر در مسیریاب دلخواه (در صورت نیاز):
                   </span>
                   <div className="grid grid-cols-3 gap-2">
@@ -295,21 +295,21 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                       onClick={() => openMap('neshan')}
                       className="py-2.5 px-3 rounded-xl bg-[#1f1f2e] hover:bg-[#28283c] border border-[#2f2f45] text-neutral-200 font-bold flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      <Navigation className="w-3.5 h-3.5 text-blue-400" />
+                      <Navigation className="w-4 h-4 text-blue-400" />
                       <span>نشان</span>
                     </button>
                     <button
                       onClick={() => openMap('balad')}
                       className="py-2.5 px-3 rounded-xl bg-[#1f1f2e] hover:bg-[#28283c] border border-[#2f2f45] text-neutral-200 font-bold flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                      <Navigation className="w-4 h-4 text-emerald-400" />
                       <span>بلد</span>
                     </button>
                     <button
                       onClick={() => openMap('google')}
                       className="py-2.5 px-3 rounded-xl bg-[#1f1f2e] hover:bg-[#28283c] border border-[#2f2f45] text-neutral-200 font-bold flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                      <ExternalLink className="w-4 h-4 text-amber-400" />
                       <span>گوگل‌مپ</span>
                     </button>
                   </div>
@@ -318,7 +318,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
               <button
                 onClick={() => setCurrentStep(2)}
-                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
+                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
               >
                 <span>رسیدم به فروشگاه (بررسی و تست کالا)</span>
                 <ChevronLeft className="w-4 h-4" />
@@ -330,17 +330,17 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
           {currentStep === 2 && (
             <div className="space-y-4 animate-fade-in">
               <div className="p-4 rounded-2xl bg-[#191924] border border-[#272738] space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div>
-                    <h4 className="font-extrabold text-sm text-white">
+                    <h4 className="font-extrabold text-sm sm:text-base text-white">
                       چک‌لیست تست کالا قبل از پرداخت در مغازه
                     </h4>
-                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                    <p className="text-xs sm:text-[13px] text-neutral-400 mt-0.5">
                       قبل از کارت کشیدن، این موارد را با حوصله در مغازه چک کنید:
                     </p>
                   </div>
                   <span
-                    className={`px-2.5 py-1 rounded-xl text-xs font-black ${
+                    className={`px-3 py-1 rounded-xl text-xs sm:text-[13px] font-black shrink-0 ${
                       checklistPercent === 100
                         ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                         : 'bg-[#20202e] text-neutral-300'
@@ -401,8 +401,8 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                         {checkList[item.key] && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                       </div>
                       <div className="min-w-0">
-                        <div className="font-bold text-xs">{item.title}</div>
-                        <div className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
+                        <div className="font-bold text-[13px] sm:text-sm">{item.title}</div>
+                        <div className="text-xs sm:text-[13px] text-neutral-400 mt-0.5 leading-relaxed">
                           {item.desc}
                         </div>
                       </div>
@@ -413,7 +413,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
               <button
                 onClick={() => setCurrentStep(3)}
-                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
+                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
               >
                 <span>کالا تست شد، رفتن به مرحله پرداخت</span>
                 <ChevronLeft className="w-4 h-4" />
@@ -426,20 +426,20 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
             <div className="space-y-4 animate-fade-in">
               <div className="p-4 rounded-2xl bg-[#191924] border border-[#272738] space-y-3.5">
                 <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-white">
+                  <span className="font-extrabold text-sm sm:text-base text-white">
                     پرداخت در فروشگاه و دریافت فاکتور
                   </span>
-                  <span className="text-sm font-black text-emerald-400">
+                  <span className="text-base font-black text-emerald-400">
                     {offer.price.toLocaleString('fa-IR')} تومان
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-[#12121a] border border-[#222230] space-y-2 text-[11px]">
+                <div className="p-3.5 rounded-xl bg-[#12121a] border border-[#222230] space-y-2 text-xs sm:text-[13px]">
                   <div className="flex items-center gap-2 text-neutral-200">
                     <Receipt className="w-4 h-4 text-emerald-400 shrink-0" />
                     <span className="font-bold">نکات دریافت فاکتور در خرید حضوری:</span>
                   </div>
-                  <ul className="list-disc list-inside space-y-1 text-neutral-400 pr-1 leading-relaxed">
+                  <ul className="list-disc list-inside space-y-1.5 text-neutral-400 pr-1 leading-relaxed">
                     <li>
                       روی برگه رسید کارتخوان بررسی کنید که نام پذیرنده به نام فروشگاه{' '}
                       <strong className="text-white">({offer.shopName})</strong> باشد.
@@ -452,7 +452,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-neutral-300 block">
+                  <label className="text-xs sm:text-[13px] font-bold text-neutral-300 block">
                     شماره فاکتور یا کد پیگیری کارتخوان (اختیاری):
                   </label>
                   <input
@@ -460,14 +460,14 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                     value={invoiceNumber}
                     onChange={(e) => setInvoiceNumber(e.target.value)}
                     placeholder="مثال: ۸۴۹۲۳۱"
-                    className="w-full bg-[#12121a] border border-[#282838] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#e9325a]"
+                    className="w-full bg-[#12121a] border border-[#282838] rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-[#e9325a]"
                   />
                 </div>
               </div>
 
               <button
                 onClick={() => setCurrentStep(4)}
-                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
+                className="w-full py-3 rounded-2xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-[#e9325a]/25 transition-all"
               >
                 <span>پرداخت انجام شد و فاکتور گرفتم</span>
                 <ChevronLeft className="w-4 h-4" />
@@ -483,10 +483,10 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <h4 className="text-base font-black text-white">
+                <h4 className="text-base sm:text-lg font-black text-white">
                   خرید شما انجام شد، مبارکتان باشد 🎉
                 </h4>
-                <p className="text-xs text-neutral-400 max-w-md mx-auto leading-relaxed">
+                <p className="text-[13px] sm:text-sm text-neutral-400 max-w-md mx-auto leading-relaxed">
                   اطلاعات خرید شما از {offer.shopName} ثبت شد. بازخورد شما به بهبود اطلاعات و
                   قیمت‌های ترب کمک می‌کند.
                 </p>
@@ -494,7 +494,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
               {/* Star Rating for Shop */}
               <div className="p-4 rounded-2xl bg-[#191924] border border-[#272738] space-y-2 max-w-sm mx-auto">
-                <span className="text-xs font-bold text-neutral-300 block">
+                <span className="text-[13px] sm:text-sm font-bold text-neutral-300 block">
                   تجربه مراجعه به {offer.shopName}:
                 </span>
                 <div className="flex items-center justify-center gap-1.5">
@@ -518,7 +518,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
               <button
                 onClick={onClose}
-                className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-black font-black text-sm transition-all shadow-lg shadow-emerald-500/20"
+                className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-black font-black text-sm sm:text-base transition-all shadow-lg shadow-emerald-500/20"
               >
                 بستن همراه خرید
               </button>
@@ -527,7 +527,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
 
           {/* SIMPLIFIED RESCUE / REPORT SECTION */}
           <div className="pt-3 border-t border-[#20202c] space-y-2.5">
-            <div className="flex items-center justify-between text-neutral-400 text-[11px] font-bold">
+            <div className="flex items-center justify-between text-neutral-400 text-xs sm:text-[13px] font-bold">
               <span>در صورت بروز مشکل در محل فروشگاه:</span>
             </div>
 
@@ -543,9 +543,9 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                     : 'bg-[#181822] border-[#252536] text-neutral-300 hover:border-[#35354a]'
                 }`}
               >
-                <FileQuestion className="w-3.5 h-3.5 text-amber-400 mb-1" />
-                <div className="font-bold text-[11px]">قیمت متفاوت بود؟</div>
-                <div className="text-[10px] text-neutral-500">گزارش مغایرت قیمت</div>
+                <FileQuestion className="w-4 h-4 text-amber-400 mb-1" />
+                <div className="font-bold text-xs sm:text-[13px]">قیمت متفاوت بود؟</div>
+                <div className="text-xs text-neutral-500">گزارش مغایرت قیمت</div>
               </button>
 
               {/* Option 2: Closed Shop */}
@@ -557,9 +557,9 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                     : 'bg-[#181822] border-[#252536] text-neutral-300 hover:border-[#35354a]'
                 }`}
               >
-                <Store className="w-3.5 h-3.5 text-[#ff4d79] mb-1" />
-                <div className="font-bold text-[11px]">مغازه بسته بود؟</div>
-                <div className="text-[10px] text-neutral-500">فروشگاه جایگزین باز</div>
+                <Store className="w-4 h-4 text-[#ff4d79] mb-1" />
+                <div className="font-bold text-xs sm:text-[13px]">مغازه بسته بود؟</div>
+                <div className="text-xs text-neutral-500">فروشگاه جایگزین باز</div>
               </button>
 
               {/* Option 3: Contact Store */}
@@ -573,9 +573,9 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                     : 'bg-[#181822] border-[#252536] text-neutral-300 hover:border-[#35354a]'
                 }`}
               >
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-400 mb-1" />
-                <div className="font-bold text-[11px]">تماس با مغازه</div>
-                <div className="text-[10px] text-neutral-500">{offer.phone}</div>
+                <PhoneCall className="w-4 h-4 text-emerald-400 mb-1" />
+                <div className="font-bold text-xs sm:text-[13px]">تماس با مغازه</div>
+                <div className="text-xs text-neutral-500">{offer.phone}</div>
               </button>
             </div>
 
@@ -586,14 +586,14 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                   <FileQuestion className="w-4 h-4 text-amber-400" />
                   <span>ثبت مغایرت قیمت فروشگاه:</span>
                 </div>
-                <p className="text-[11px] text-neutral-300 leading-relaxed">
+                <p className="text-xs sm:text-[13px] text-neutral-300 leading-relaxed">
                   اگر قیمت اعلام‌شده در فروشگاه با قیمت ثبت‌شده در سایت (
                   {offer.price.toLocaleString('fa-IR')} تومان) تفاوت داشت، آن را ثبت کنید تا تیم
                   پشتیبانی با فروشنده تماس گرفته و قیمت را اصلاح کند.
                 </p>
 
                 {discrepancyReported ? (
-                  <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold text-center">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[13px] font-bold text-center">
                     ✓ گزارش شما ثبت شد. با صاحب فروشگاه تماس گرفته می‌شود تا قیمت در سایت تصحیح
                     گردد.
                   </div>
@@ -605,11 +605,11 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                       value={reportedPriceInput}
                       onChange={(e) => setReportedPriceInput(e.target.value)}
                       placeholder="قیمت اعلامی فروشنده به تومان (مثلاً: ۴۲,۵۰۰,۰۰۰)"
-                      className="w-full bg-[#12121a] border border-[#302720] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                      className="w-full bg-[#12121a] border border-[#302720] rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                     <button
                       type="submit"
-                      className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-xs transition-colors"
+                      className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-[13px] sm:text-sm transition-colors"
                     >
                       ثبت گزارش برای پیگیری و اصلاح قیمت
                     </button>
@@ -622,7 +622,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
             {activeIssue === 'closed' && (
               <div className="p-3.5 rounded-2xl bg-[#1f1620] border border-[#ff4d79]/40 space-y-2.5 animate-fade-in">
                 <div className="flex items-center gap-1.5 font-bold text-[#ff80a0]">
-                  <RefreshCw className={`w-3.5 h-3.5 ${fallbackLoading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${fallbackLoading ? 'animate-spin' : ''}`} />
                   <span>
                     {fallbackData
                       ? fallbackData.bannerFa
@@ -630,17 +630,17 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                   </span>
                 </div>
                 {fallbackLoading ? (
-                  <div className="text-xs text-neutral-300 py-1">
+                  <div className="text-[13px] text-neutral-300 py-1">
                     در حال جستجوی فروشگاه جایگزین باز در همان پاساژ یا خیابان...
                   </div>
                 ) : fallbackData ? (
                   <div className="p-3 rounded-xl bg-[#14141d] border border-[#2b2b3d] space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <div className="font-extrabold text-white text-xs">
+                        <div className="font-extrabold text-white text-[13px] sm:text-sm">
                           {fallbackData.offer.shopName}
                         </div>
-                        <div className="text-[10px] text-neutral-400 mt-0.5">
+                        <div className="text-xs text-neutral-400 mt-0.5">
                           {[
                             fallbackData.offer.mallName,
                             fallbackData.offer.mallFloor,
@@ -650,7 +650,7 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                             .join(' • ') || fallbackData.offer.address}
                         </div>
                       </div>
-                      <span className="font-black text-emerald-400 text-xs shrink-0">
+                      <span className="font-black text-emerald-400 text-[13px] sm:text-sm shrink-0">
                         {fallbackData.offer.price.toLocaleString('fa-IR')} تومان
                       </span>
                     </div>
@@ -662,23 +662,15 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
                           setActiveIssue(null);
                           setCurrentStep(1);
                         }}
-                        className="w-full py-2 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-xs transition-colors cursor-pointer"
+                        className="w-full py-2.5 rounded-xl bg-[#e9325a] hover:bg-[#ff2d5f] text-white font-extrabold text-[13px] sm:text-sm transition-colors cursor-pointer"
                       >
                         انتخاب و تغییر مسیر به این فروشگاه جایگزین
                       </button>
                     )}
                   </div>
                 ) : (
-                  <div className="p-2.5 rounded-xl bg-[#14141d] border border-[#2b2b3d] flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white">فروشگاه تکنولند جمهوری</div>
-                      <div className="text-[10px] text-neutral-400">
-                        ۲ دقیقه پیاده · موجودی تاییدشده
-                      </div>
-                    </div>
-                    <span className="font-black text-emerald-400">
-                      {(offer.price + 200000).toLocaleString('fa-IR')} تومان
-                    </span>
+                  <div className="p-2.5 rounded-xl bg-[#14141d] border border-[#2b2b3d] text-xs text-neutral-400">
+                    فروشگاه جایگزین نزدیک با موجودی این کالا یافت نشد.
                   </div>
                 )}
               </div>
@@ -689,11 +681,11 @@ export const ShoppingCompanionModal: React.FC<ShoppingCompanionModalProps> = ({
               <div className="p-3.5 rounded-2xl bg-[#161c1a] border border-emerald-500/40 space-y-2 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <span className="text-white font-bold">شماره تلفن فروشگاه:</span>
-                  <span className="text-emerald-400 font-extrabold">{offer.phone}</span>
+                  <span className="text-emerald-400 font-extrabold text-base">{offer.phone}</span>
                 </div>
                 <a
                   href={`tel:${offer.phone.replace(/[^0-9]/g, '')}`}
-                  className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-black font-bold flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-black font-bold flex items-center justify-center gap-2 transition-all"
                 >
                   <PhoneCall className="w-4 h-4" />
                   <span>تماس تلفنی با فروشگاه</span>

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import logging
 from typing import Any
 
 import asyncpg
@@ -16,10 +17,21 @@ from backend.db.redis_cache import (
     set_cached_json,
 )
 
-# In-memory fallback stores used when Redis/PostgreSQL are omitted in isolated unit tests
+logger = logging.getLogger(__name__)
+
+# Bounded in-memory fallback stores used when Redis/PostgreSQL are omitted in isolated unit tests
+_MAX_MEMORY_CACHE_SIZE = 128
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
 _MEMORY_SESSIONS: dict[str, dict[str, Any]] = {}
 _MEMORY_TRAITS: dict[str, list[dict[str, Any]]] = {}
+
+
+def _put_bounded_memory(store: dict[str, Any], key: str, value: Any) -> None:
+    if key in store:
+        store.pop(key, None)
+    elif len(store) >= _MAX_MEMORY_CACHE_SIZE:
+        store.pop(next(iter(store)), None)
+    store[key] = value
 
 SESSION_CONTEXT_KEYS = (
     "title",
@@ -155,8 +167,8 @@ async def load_user_profile(
                     }
                     await set_cached_json(redis_client, r_key, profile, settings.redis_profile_ttl_seconds)
                     return profile
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load user_profile for %s from PostgreSQL: %s", user_id, exc)
 
     if user_id in _MEMORY_PROFILES and "store_weights" in _MEMORY_PROFILES[user_id]:
         return _MEMORY_PROFILES[user_id]
@@ -182,7 +194,7 @@ async def save_user_profile(
         "price_percentiles": pp,
         "interaction_count": int(profile.get("interaction_count", 0)),
     }
-    _MEMORY_PROFILES[user_id] = clean_profile
+    _put_bounded_memory(_MEMORY_PROFILES, user_id, clean_profile)
     await set_cached_json(redis_client, profile_key(user_id), clean_profile, settings.redis_profile_ttl_seconds)
 
     if pg_pool is not None:
@@ -203,8 +215,8 @@ async def save_user_profile(
                     json.dumps(pp, ensure_ascii=False),
                     clean_profile["interaction_count"],
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to save user_profile for %s to PostgreSQL: %s", user_id, exc)
 
 
 async def fetch_user_traits(
@@ -240,8 +252,8 @@ async def fetch_user_traits(
                         }
                         for r in rows
                     ]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to fetch user_trait_memory for %s: %s", user_id, exc)
 
     mem_items = list(_MEMORY_TRAITS.get(user_id, []))
     if not mem_items:
@@ -286,8 +298,8 @@ async def find_closest_user_aspects_pgvector(
                 )
                 if rows:
                     return [dict(r) for r in rows]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to query closest user aspects for %s: %s", user_id, exc)
 
     mem_items = list(_MEMORY_TRAITS.get(user_id, []))
     if not mem_items:
@@ -338,6 +350,8 @@ async def upsert_user_trait_with_inertia(
                 same_preference_trait_id = int(r["trait_id"])
                 break
 
+    if user_id not in _MEMORY_TRAITS and len(_MEMORY_TRAITS) >= _MAX_MEMORY_CACHE_SIZE:
+        _MEMORY_TRAITS.pop(next(iter(_MEMORY_TRAITS)), None)
     mem_list = _MEMORY_TRAITS.setdefault(user_id, [])
     aspect_ids = {int(r["trait_id"]) for r in aspect_rows if r.get("trait_id") is not None}
     for it in mem_list:
@@ -484,8 +498,8 @@ async def upsert_user_trait_with_inertia(
                         db_aspect_ids,
                         max_per_aspect,
                     )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to upsert user_trait_memory for %s: %s", user_id, exc)
 
     return target_record
 
@@ -552,8 +566,8 @@ async def load_shopping_session(
                     )
                     await set_cached_json(redis_client, s_key, sess, settings.redis_session_ttl_seconds)
                     return sess
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load shopping_session %s from PostgreSQL: %s", session_id, exc)
 
     if session_id in _MEMORY_SESSIONS:
         sess = _MEMORY_SESSIONS[session_id]
@@ -575,7 +589,7 @@ async def save_shopping_session(
 ) -> None:
     """Persist shopping session (including full `session_context_json`) to Redis and PostgreSQL."""
     session_id = str(session["session_id"])
-    _MEMORY_SESSIONS[session_id] = session
+    _put_bounded_memory(_MEMORY_SESSIONS, session_id, session)
     await set_cached_json(redis_client, session_key(session_id), session, settings.redis_session_ttl_seconds)
 
     if pg_pool is not None:
@@ -617,8 +631,8 @@ async def save_shopping_session(
                     bool(session.get("dissatisfaction_triggered", False)),
                     json.dumps(session.get("messages", []), ensure_ascii=False),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to save shopping_session %s to PostgreSQL: %s", session_id, exc)
 
 
 def _derive_session_title(ctx: dict[str, Any], messages: list[dict[str, Any]], active_cat: str | None) -> str:
@@ -686,8 +700,8 @@ async def list_user_shopping_sessions(
                         }
                     )
                 return results
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to list shopping_sessions for %s: %s", user_id, exc)
 
     items: list[dict[str, Any]] = []
     for sid, sess in list(_MEMORY_SESSIONS.items()):
@@ -734,7 +748,8 @@ async def get_user_shopping_session_detail(
                         if row["updated_at"]
                         else updated_iso
                     )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch shopping_session detail %s: %s", session_id, exc)
             row = None
         if row is not None:
             sess = await load_shopping_session(
@@ -808,6 +823,6 @@ async def delete_user_shopping_session(
                 )
                 if tag and not tag.endswith(" 0"):
                     deleted = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to delete shopping_session %s from PostgreSQL: %s", session_id, exc)
     return deleted

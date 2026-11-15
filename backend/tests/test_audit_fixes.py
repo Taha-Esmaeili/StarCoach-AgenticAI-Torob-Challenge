@@ -320,3 +320,31 @@ async def test_live_db_orthography_censored_filter_comparison_and_fallback():
         assert float(alt["distance_km"]) > 0.5, f"Expected distance from user, got {alt['distance_km']}"
     finally:
         await pool.close()
+
+
+def test_07_bounded_memory_and_feedback_contracts():
+    from backend.db.profiles import _MAX_MEMORY_CACHE_SIZE, _put_bounded_memory
+    from backend.models.schemas import FeedbackRequest
+
+    store: dict[str, int] = {}
+    for i in range(_MAX_MEMORY_CACHE_SIZE + 10):
+        _put_bounded_memory(store, f"k_{i}", i)
+    assert len(store) == _MAX_MEMORY_CACHE_SIZE
+    assert "k_0" not in store
+    assert f"k_{_MAX_MEMORY_CACHE_SIZE + 9}" in store
+
+    req_prod = FeedbackRequest(
+        session_id="sess_test",
+        feedback_type="product_select",
+        selected_product_id="prod_4",
+    )
+    assert req_prod.selected_product_id == "prod_4"
+
+    req_const = FeedbackRequest(
+        session_id="sess_test",
+        feedback_type="constraint_update",
+        hard_constraints=HardConstraintsState(require_open_now=True, require_installment=True),
+        require_torob_pay=True,
+    )
+    assert req_const.require_torob_pay is True
+    assert req_const.hard_constraints is not None and req_const.hard_constraints.require_open_now is True

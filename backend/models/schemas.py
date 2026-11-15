@@ -182,13 +182,17 @@ class FeedbackRequest(BaseModel):
         "weight_override",
         "price_discrepancy",
         "location_update",
+        "product_select",
+        "constraint_update",
     ]
     target_offer_id: str | int | None = None
     target_product_id: str | int | None = None
+    selected_product_id: str | int | None = None
     selected_option_id: str | None = None
     clarification_answers: dict[str, str] = Field(default_factory=dict)
     weight_overrides: dict[str, float] = Field(default_factory=dict)
     hard_constraints: HardConstraintsState | None = None
+    require_torob_pay: bool | None = None
     user_location: Coordinates = Field(default_factory=Coordinates)
 
 
