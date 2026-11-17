@@ -2,11 +2,14 @@
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 import redis.asyncio as aioredis
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def session_key(session_id: str) -> str:
@@ -41,7 +44,8 @@ async def get_cached_json(redis_client: aioredis.Redis | None, key: str) -> dict
         if not raw:
             return None
         return json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Redis get_cached_json failed for %s: %s", key, exc)
         return None
 
 
@@ -56,7 +60,8 @@ async def set_cached_json(
     try:
         await redis_client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl_seconds)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.debug("Redis set_cached_json failed for %s: %s", key, exc)
         return False
 
 
@@ -65,5 +70,6 @@ async def delete_cached_key(redis_client: aioredis.Redis | None, key: str) -> No
         return
     try:
         await redis_client.delete(key)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Redis delete_cached_key failed for %s: %s", key, exc)
         return

@@ -2,9 +2,11 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import time
 from typing import Any
+import uuid
 
 import asyncpg
 import redis.asyncio as aioredis
@@ -14,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
+from backend.logger import configure_logging, set_log_context
 from backend.db.normalizer import (
     canonicalize_spec_map,
     normalize_persian_text,
@@ -81,6 +84,10 @@ from backend.recsys.weights import (
 )
 
 
+configure_logging()
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage PostgreSQL (`asyncpg`) and Redis (`redis.asyncio`) connection pools configured via .env."""
@@ -95,8 +102,10 @@ async def lifespan(app: FastAPI):
             command_timeout=settings.postgres_command_timeout_seconds,
         )
         await ensure_schema(app.state.pg_pool)
-    except Exception:
+        logger.info("PostgreSQL pool and pgvector/pg_trgm schema initialized")
+    except Exception as exc:
         # shortcut: allow app startup before docker-compose / DB ingestion runs; health endpoint reports postgres_pgvector_ready=False
+        logger.warning("PostgreSQL startup connection unavailable: %s", exc)
         app.state.pg_pool = None
 
     try:
@@ -108,7 +117,9 @@ async def lifespan(app: FastAPI):
         )
         await redis_client.ping()
         app.state.redis = redis_client
-    except Exception:
+        logger.info("Redis client connected")
+    except Exception as exc:
+        logger.warning("Redis startup connection unavailable: %s", exc)
         app.state.redis = None
 
     yield
@@ -118,6 +129,7 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "redis", None) is not None:
         await app.state.redis.aclose()
     await close_shared_http_client()
+    logger.info("Application shutdown complete")
 
 
 app = FastAPI(
@@ -133,6 +145,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """Inject `X-Request-ID`, bind async log context, and emit structured HTTP latency logs."""
+    req_id = (request.headers.get("X-Request-ID") or "").strip() or uuid.uuid4().hex[:12]
+    set_log_context(request_id=req_id, session_id="-")
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        dur_ms = round((time.perf_counter() - t0) * 1000, 2)
+        logger.exception(
+            "Unhandled HTTP error",
+            extra={"method": request.method, "path": request.url.path, "duration_ms": dur_ms},
+        )
+        raise
+    dur_ms = round((time.perf_counter() - t0) * 1000, 2)
+    response.headers["X-Request-ID"] = req_id
+    if request.url.path.startswith("/api/"):
+        logger.info(
+            "HTTP request completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": dur_ms,
+            },
+        )
+    return response
 
 
 async def _probe_postgres_counts(pg_pool: Any) -> tuple[bool, DatasetCounts]:
@@ -422,6 +464,7 @@ async def post_chat_turn(
     background_tasks: BackgroundTasks,
 ) -> ChatTurnResponse:
     """Execute a full conversational shopping turn powered by the Clean Two-Layer Adaptive Jev RecSys."""
+    set_log_context(session_id=req.session_id)
     pg_pool = getattr(request.app.state, "pg_pool", None)
     redis_client = getattr(request.app.state, "redis", None)
 
@@ -904,6 +947,17 @@ async def post_chat_turn(
     session["updated_at"] = now_iso
 
     await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
+    logger.info(
+        "Chat turn processed",
+        extra={
+            "user_id": req.user_id,
+            "intent": eval_res.intent_choice.choice,
+            "widget_type": widget_type,
+            "products_count": len(product_cards),
+            "stores_count": len(scored_stores),
+            "effective_confidence": round(eff_conf, 3),
+        },
+    )
 
     return resp_obj
 
@@ -916,6 +970,7 @@ async def post_feedback(
     background_tasks: BackgroundTasks,
 ) -> ChatTurnResponse:
     """Process clarification choices, 👍/👎 feedback, or slider overrides with strict consolidation safety."""
+    set_log_context(session_id=req.session_id)
     pg_pool = getattr(request.app.state, "pg_pool", None)
     redis_client = getattr(request.app.state, "redis", None)
 
@@ -1534,6 +1589,16 @@ async def post_feedback(
     if profile_mutated:
         await save_user_profile(user_profile, pg_pool=pg_pool, redis_client=redis_client)
     await save_shopping_session(session, pg_pool=pg_pool, redis_client=redis_client)
+    logger.info(
+        "Feedback processed",
+        extra={
+            "user_id": req.user_id,
+            "feedback_type": req.feedback_type,
+            "widget_type": widget_type,
+            "stores_count": len(scored_stores),
+            "profile_mutated": profile_mutated,
+        },
+    )
 
     return resp_obj
 

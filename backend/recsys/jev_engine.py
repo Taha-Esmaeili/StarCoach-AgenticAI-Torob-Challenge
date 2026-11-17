@@ -11,13 +11,17 @@ Zero hardcoded categories, domains, keyword lists, or heuristic simulators:
 import asyncio
 from dataclasses import dataclass, field
 import json
+import logging
 import re
+import time
 from typing import Any, Literal
 
 import httpx
 
 from backend.config import settings
 from backend.db.normalizer import normalize_persian_text
+
+logger = logging.getLogger(__name__)
 
 # 5 Orthogonal Numerical Store Criteria + Optional Conditional Slot 6 (`w_offer_custom`)
 STORE_CRITERIA_CATALOG: dict[str, dict[str, Any]] = {
@@ -200,6 +204,7 @@ async def _call_decision_model(state_payload: dict[str, Any], questions: dict[st
 
     resp: httpx.Response | None = None
     client = _get_shared_http_client()
+    t0 = time.perf_counter()
     for attempt in range(5):
         try:
             resp = await client.post(
@@ -210,23 +215,43 @@ async def _call_decision_model(state_payload: dict[str, Any], questions: dict[st
             )
             if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 4:
                 break
+            logger.warning(
+                "Decision model transient status %s, retrying",
+                resp.status_code,
+                extra={"model": model_name, "attempt": attempt + 1},
+            )
             if resp.status_code == 429:
                 m_delay = re.search(r"retryDelay\"\s*:\s*\"(\d+)", resp.text or "")
                 wait_s = min(28.0, float(m_delay.group(1)) + 1.5) if m_delay else min(20.0, 3.0 * (2**attempt))
                 await asyncio.sleep(wait_s)
                 continue
         except httpx.HTTPError as exc:
+            logger.warning(
+                "Decision model HTTP error on attempt %d: %s",
+                attempt + 1,
+                exc,
+                extra={"model": model_name, "attempt": attempt + 1},
+            )
             if attempt == 4:
                 raise RuntimeError(
                     f"خطای شبکه/تایم‌اوت در فراخوانی مدل Decision ({model_name}) از {target_url}: {type(exc).__name__} ({exc})"
                 ) from exc
         await asyncio.sleep(1.5 * (2**attempt))
     assert resp is not None
+    dur_ms = round((time.perf_counter() - t0) * 1000, 2)
 
     if resp.status_code != 200:
+        logger.error(
+            "Decision model call failed",
+            extra={"model": model_name, "status_code": resp.status_code, "duration_ms": dur_ms},
+        )
         raise RuntimeError(
             f"خطا در فراخوانی مدل Decision ({model_name}) از {target_url} (کد {resp.status_code}): {resp.text[:300]}"
         )
+    logger.info(
+        "Decision model call succeeded",
+        extra={"model": model_name, "questions_count": len(questions), "duration_ms": dur_ms},
+    )
     resp_json = resp.json()
     if isinstance(resp_json.get("data"), dict) and "answers" in resp_json["data"]:
         return resp_json["data"]["answers"]
@@ -407,6 +432,7 @@ async def _extract_entities_with_llm(
 
     resp: httpx.Response | None = None
     client = _get_shared_http_client()
+    t0 = time.perf_counter()
     for attempt in range(4):
         try:
             resp = await client.post(
@@ -427,18 +453,38 @@ async def _extract_entities_with_llm(
             )
             if resp.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
                 break
+            logger.warning(
+                "LLM extraction transient status %s, retrying",
+                resp.status_code,
+                extra={"model": settings.llm_model, "attempt": attempt + 1},
+            )
         except httpx.HTTPError as exc:
+            logger.warning(
+                "LLM extraction HTTP error on attempt %d: %s",
+                attempt + 1,
+                exc,
+                extra={"model": settings.llm_model, "attempt": attempt + 1},
+            )
             if attempt == 3:
                 raise RuntimeError(
                     f"خطای شبکه/تایم‌اوت در اتصال به مدل زبانی ({settings.llm_model}) در {base_url}: {type(exc).__name__} ({exc})"
                 ) from exc
         await asyncio.sleep(1.5 * (2**attempt))
     assert resp is not None
+    dur_ms = round((time.perf_counter() - t0) * 1000, 2)
 
     if resp.status_code != 200:
+        logger.error(
+            "LLM extraction call failed",
+            extra={"model": settings.llm_model, "status_code": resp.status_code, "duration_ms": dur_ms},
+        )
         raise RuntimeError(
             f"خطا در فراخوانی مدل زبانی ({settings.llm_model}) از {base_url} (کد {resp.status_code}): {resp.text[:300]}"
         )
+    logger.info(
+        "LLM extraction call succeeded",
+        extra={"model": settings.llm_model, "duration_ms": dur_ms},
+    )
     body = resp.json()
     raw_content = body["choices"][0]["message"]["content"]
     parsed = _extract_json_object(raw_content)

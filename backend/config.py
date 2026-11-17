@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "*"
     host: str = "0.0.0.0"
     port: int = 8000
+    log_level: str = "INFO"
+    log_format: str = "json"
 
     @property
     def asyncpg_dsn(self) -> str:

@@ -1,10 +1,14 @@
 """Phase 1 & Spec 003 contract checks: .env-driven configuration, 5+1 slot bounds, FeedbackRequest DTO, and /api/v1/health."""
 
+import json
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from backend.config import Settings, settings
+from backend.logger import StructuredLogFormatter, set_log_context
 from backend.main import app
 from backend.models.schemas import (
     ActiveWeightSlot,
@@ -131,3 +135,34 @@ def test_health_endpoint_contract():
         assert "counts" in body
         assert set(body["counts"].keys()) == {"shops", "products", "offers", "real_torob_shops"}
         assert body["jev_engine_mode"] in ("typesafe_sdk", "openai_compatible_system_one")
+        assert response.headers.get("X-Request-ID")
+
+
+def test_structured_logging_formatter_and_request_id():
+    set_log_context(request_id="req_test_99", session_id="sess_test_42")
+    record = logging.LogRecord(
+        name="backend.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="فروشگاه حضوری پیدا شد",
+        args=(),
+        exc_info=None,
+    )
+    record.duration_ms = 12.5
+
+    json_line = StructuredLogFormatter(fmt_mode="json").format(record)
+    parsed = json.loads(json_line)
+    assert parsed["request_id"] == "req_test_99"
+    assert parsed["session_id"] == "sess_test_42"
+    assert parsed["message"] == "فروشگاه حضوری پیدا شد"
+    assert parsed["duration_ms"] == 12.5
+
+    console_line = StructuredLogFormatter(fmt_mode="console").format(record)
+    assert "req=req_test_99 sess=sess_test_42" in console_line
+    assert "duration_ms=12.5" in console_line
+
+    with TestClient(app) as client:
+        resp = client.get(f"{settings.api_v1_prefix}/health", headers={"X-Request-ID": "custom_req_01"})
+        assert resp.status_code == 200
+        assert resp.headers.get("X-Request-ID") == "custom_req_01"
